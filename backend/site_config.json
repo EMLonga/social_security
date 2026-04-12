@@ -1,0 +1,7 @@
+{
+  "site_name": "Community Safety Alert",
+  "logo": "",
+  "bilingual_enabled": false,
+  "disclaimer": "Data provided for reference only. Not legal or safety advice.",
+  "data_sources": "CrimeReports, CityProtect, local police public feeds"
+}

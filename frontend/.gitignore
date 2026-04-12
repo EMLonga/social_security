@@ -1,0 +1,42 @@
+node_modules/
+dist/
+build/
+.next/
+.nuxt/
+coverage/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Dependencies
+package-lock.json
+yarn.lock
+
+# Build
+dist/
+.dist/
+
+# Testing
+.coverage
+htmlcov/
+
+# Temporary
+temp/
+tmp/
