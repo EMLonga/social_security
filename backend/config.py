@@ -47,7 +47,7 @@ class Settings:
     LLM_TIMEOUT_SECONDS: int = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
     LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "500"))
     LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.3"))
-    
+
     class Config:
         case_sensitive = True
 

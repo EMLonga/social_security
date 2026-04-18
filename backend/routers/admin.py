@@ -184,7 +184,8 @@ async def create_admin_event(
         address=payload.address,
         zipcode=payload.zipcode,
         max_distance_km=180.0,
-        allow_dynamic_core=True,
+        allow_dynamic_core=False,
+        enforce_existing=True,
     )
     if not inferred:
         raise HTTPException(status_code=400, detail="Unable to infer community from location fields")

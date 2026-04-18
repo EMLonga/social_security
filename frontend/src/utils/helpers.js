@@ -27,12 +27,12 @@ export const dateUtils = {
 }
 
 export const eventTypeColors = {
-  theft: '#1d4ed8', // Flood
-  shooting: '#7c3aed', // Earthquake
-  fire: '#dc2626', // Fire Risk
-  security: '#0f766e', // General Alert
-  fraud: '#f59e0b', // Severe Storm
-  other: '#6b7280', // Other Hazard
+  theft: '#1d4ed8',
+  shooting: '#7c3aed',
+  fire: '#dc2626',
+  security: '#0f766e',
+  fraud: '#f59e0b',
+  other: '#6b7280',
 }
 
 export const dangerLevelColors = {

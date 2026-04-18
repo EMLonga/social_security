@@ -333,7 +333,8 @@ class PublicDataIngestor:
             address=address_text,
             zipcode=zip_text,
             max_distance_km=180.0,
-            allow_dynamic_core=True,
+            allow_dynamic_core=False,
+            enforce_existing=True,
         )
         if not community:
             return None
@@ -462,7 +463,8 @@ class PublicDataIngestor:
                 address=None,
                 zipcode=None,
                 max_distance_km=220.0,
-                allow_dynamic_core=True,
+                allow_dynamic_core=False,
+                enforce_existing=True,
             )
             if not community:
                 continue
@@ -544,7 +546,8 @@ class PublicDataIngestor:
                 address=None,
                 zipcode=None,
                 max_distance_km=220.0,
-                allow_dynamic_core=True,
+                allow_dynamic_core=False,
+                enforce_existing=True,
             )
             if not community:
                 continue

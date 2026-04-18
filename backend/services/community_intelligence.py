@@ -140,6 +140,7 @@ def infer_community(
     zipcode: Optional[str] = None,
     max_distance_km: float = 180.0,
     allow_dynamic_core: bool = False,
+    enforce_existing: bool = True,
 ) -> Optional[Community]:
     communities = db.query(Community).all()
     if not communities:
@@ -183,7 +184,7 @@ def infer_community(
             best_raw_distance = raw_distance
 
     if latitude is not None and longitude is not None and best_raw_distance > max_distance_km:
-        if allow_dynamic_core:
+        if allow_dynamic_core and not enforce_existing:
             return get_or_create_dynamic_core_community(
                 db,
                 latitude=float(latitude),
@@ -191,7 +192,8 @@ def infer_community(
                 address=address,
                 zipcode=zipcode,
             )
-        return None
+        # Enforce assigning events only to existing communities.
+        return best if enforce_existing else None
 
     return best
 
