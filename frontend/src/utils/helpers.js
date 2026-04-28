@@ -45,20 +45,20 @@ export const getEventTypeLabel = (type) => {
   const isZh = localStorage.getItem('language') === 'zh'
   const labels = isZh
     ? {
-        theft: '洪水',
-        shooting: '地震',
-        fire: '火灾风险',
-        security: '一般警报',
-        fraud: '强风暴',
-        other: '其他风险',
+        theft: '盗窃/财产案件',
+        shooting: '暴力案件',
+        fire: '火灾/纵火',
+        security: '公共安全警情',
+        fraud: '诈骗/欺诈',
+        other: '其他',
       }
     : {
-        theft: 'Flood',
-        shooting: 'Earthquake',
-        fire: 'Fire Risk',
-        security: 'General Alert',
-        fraud: 'Severe Storm',
-        other: 'Other Hazard',
+        theft: 'Theft / Property Crime',
+        shooting: 'Violent Crime',
+        fire: 'Fire / Arson',
+        security: 'Public Safety Alert',
+        fraud: 'Fraud / Scam',
+        other: 'Other',
       }
   return labels[type] || type
 }

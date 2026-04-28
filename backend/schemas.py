@@ -80,6 +80,7 @@ class EventResponse(BaseModel):
     zipcode: Optional[str]
     event_time: datetime
     data_source: str
+    source_url: Optional[str] = None
     community_name: Optional[str] = None
     like_count: int
     comment_count: int

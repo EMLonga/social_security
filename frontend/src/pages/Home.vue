@@ -13,11 +13,11 @@
             <label>{{ t('eventType') }}</label>
             <el-select v-model="selectedEventType" :placeholder="t('all')" size="small" @change="loadData">
               <el-option :label="t('all')" value="" />
-              <el-option :label="t('flood')" value="theft" />
-              <el-option :label="t('earthquake')" value="shooting" />
-              <el-option :label="t('fireRisk')" value="fire" />
-              <el-option :label="t('generalAlert')" value="security" />
-              <el-option :label="t('severeStorm')" value="fraud" />
+              <el-option :label="t('typeTheft')" value="theft" />
+              <el-option :label="t('typeViolent')" value="shooting" />
+              <el-option :label="t('typeFire')" value="fire" />
+              <el-option :label="t('typeSecurity')" value="security" />
+              <el-option :label="t('typeFraud')" value="fraud" />
             </el-select>
           </div>
           <div class="filter-group">
@@ -111,6 +111,12 @@ const todayNewEvents = ref(0)
 const isMapLoading = ref(false)
 
 let map = null
+const HOME_MAP_BOUNDS = {
+  minLat: 18,
+  maxLat: 72,
+  minLng: -170,
+  maxLng: -60,
+}
 const GEOJSON_CANDIDATE_PATHS = [
   `${import.meta.env.BASE_URL}countries.geojson`,
   '/countries.geojson',
@@ -139,7 +145,7 @@ const markerAngleByType = {
 }
 
 const buildSeparatedMarkerPoints = (events = []) => {
-  const cellSize = 0.22
+  const cellSize = 0.1
   const grouped = new Map()
   const points = []
 
@@ -155,7 +161,7 @@ const buildSeparatedMarkerPoints = (events = []) => {
     const cellLng = Math.round(lng / cellSize)
     const cellKey = `${cellLat}_${cellLng}`
     const group = grouped.get(cellKey) || []
-    const point = { event, lat, lng, valid: true }
+    const point = { event, lat, lng, originalLat: lat, originalLng: lng, valid: true }
     group.push(point)
     grouped.set(cellKey, group)
     points.push(point)
@@ -167,21 +173,21 @@ const buildSeparatedMarkerPoints = (events = []) => {
     const lngScale = Math.max(Math.cos((centerLat * Math.PI) / 180), 0.3)
 
     group.forEach((point, idx) => {
-      const ringSize = 10
+      const ringSize = 12
       const ring = Math.floor(idx / ringSize)
       const slot = idx % ringSize
       const baseAngle = markerAngleByType[point.event.type || 'other'] ?? 0
       const angleDeg = baseAngle + slot * (360 / ringSize) + ring * 17
       const angle = (angleDeg * Math.PI) / 180
-      const radius = 0.12 + ring * 0.08
+      const radius = 0.03 + ring * 0.025
       point.lat += radius * Math.sin(angle)
       point.lng += (radius * Math.cos(angle)) / lngScale
     })
   })
 
   const validPoints = points.filter((p) => p.valid)
-  const minDistance = 0.14
-  const iterations = 5
+  const minDistance = 0.03
+  const iterations = 3
 
   for (let iter = 0; iter < iterations; iter += 1) {
     for (let i = 0; i < validPoints.length; i += 1) {
@@ -216,12 +222,33 @@ const buildSeparatedMarkerPoints = (events = []) => {
     }
   }
 
+  const maxOffset = 0.08
   validPoints.forEach((point) => {
+    const latDelta = point.lat - point.originalLat
+    const lngDelta = point.lng - point.originalLng
+    if (Math.abs(latDelta) > maxOffset) {
+      point.lat = point.originalLat + Math.sign(latDelta) * maxOffset
+    }
+    if (Math.abs(lngDelta) > maxOffset) {
+      point.lng = point.originalLng + Math.sign(lngDelta) * maxOffset
+    }
     point.lat = Math.max(-85, Math.min(85, point.lat))
     point.lng = Math.max(-180, Math.min(180, point.lng))
   })
 
   return points
+}
+
+const inHomeMapBounds = (event) => {
+  const lat = Number(event?.latitude)
+  const lng = Number(event?.longitude)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false
+  return (
+    lat >= HOME_MAP_BOUNDS.minLat &&
+    lat <= HOME_MAP_BOUNDS.maxLat &&
+    lng >= HOME_MAP_BOUNDS.minLng &&
+    lng <= HOME_MAP_BOUNDS.maxLng
+  )
 }
 
 const loadWorldGeojsonLayer = async (targetMap) => {
@@ -347,7 +374,8 @@ const loadData = async () => {
   }
 
   if (mapRes.status === 'fulfilled') {
-    mapEvents.value = mapRes.value.data.events || []
+    const rawEvents = mapRes.value.data.events || []
+    mapEvents.value = rawEvents.filter(inHomeMapBounds)
   } else {
     mapEvents.value = []
     console.error('Failed to load map events', mapRes.reason)

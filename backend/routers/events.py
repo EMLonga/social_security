@@ -1,6 +1,7 @@
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import and_, or_, func
 from typing import Optional, List
 from database import get_db
 from models import User, UserRole, Event, EventType, DangerLevel, Community, Comment
@@ -121,6 +122,15 @@ async def list_events(
 
     if danger_level:
         query = query.filter(Event.danger_level == danger_level)
+
+    if time_range is not None and int(time_range) > 0:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=int(time_range))
+        query = query.filter(
+            or_(
+                Event.event_time >= cutoff,
+                and_(Event.event_time.is_(None), Event.created_at >= cutoff),
+            )
+        )
 
     if search:
         query = query.join(Community)

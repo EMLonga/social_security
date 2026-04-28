@@ -1,8 +1,11 @@
 import asyncio
 import logging
+import random
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import aiohttp
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -145,11 +148,19 @@ class PublicDataIngestor:
     def __init__(self):
         self.session: Optional[aiohttp.ClientSession] = None
         self.db: Optional[Session] = None
+        self._request_sem = asyncio.Semaphore(2)
+        self._domain_last_hit: Dict[str, float] = {}
+        self._domain_min_interval_sec = 0.9
+        self._user_agents = [
+            "CommunitySafetyAlert/1.0 (+public-data-ingestor)",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CommunitySafetyAlertBot/1.0",
+            "Mozilla/5.0 (X11; Linux x86_64) CommunitySafetyAlertBot/1.0",
+        ]
 
     async def start(self):
         headers = {
             "Accept": "application/json",
-            "User-Agent": "CommunitySafetyAlert/1.0 (public-data-ingestor)",
+            "User-Agent": random.choice(self._user_agents),
         }
         if SOCRATA_APP_TOKEN:
             headers["X-App-Token"] = SOCRATA_APP_TOKEN
@@ -224,47 +235,127 @@ class PublicDataIngestor:
 
     @staticmethod
     def _normalize_event_type(text: str) -> EventType:
-        val = text.lower()
-        if any(k in val for k in ["flood", "inundation", "water rise", "flash flood"]):
+        val = (text or "").lower()
+
+        # Property crime
+        if any(
+            k in val
+            for k in [
+                "theft",
+                "stolen",
+                "larceny",
+                "burglary",
+                "robbery",
+                "shoplift",
+                "motor vehicle theft",
+                "auto theft",
+                "breaking and entering",
+            ]
+        ):
             return EventType.THEFT
-        if any(k in val for k in ["earthquake", "seismic", "magnitude", "tremor", "quake"]):
+
+        # Violent crime
+        if any(
+            k in val
+            for k in [
+                "shoot",
+                "gun",
+                "weapon",
+                "homicide",
+                "murder",
+                "manslaughter",
+                "assault",
+                "battery",
+                "rape",
+                "kidnapping",
+                "carjacking",
+            ]
+        ):
             return EventType.SHOOTING
-        if any(k in val for k in ["fire", "wildfire", "red flag", "arson"]):
+
+        # Fire and arson
+        if any(k in val for k in ["fire", "wildfire", "arson", "explosion", "red flag"]):
             return EventType.FIRE
-        if any(k in val for k in ["storm", "tornado", "hurricane", "blizzard", "thunderstorm", "hail", "wind"]):
+
+        # Fraud and white-collar offense
+        if any(
+            k in val
+            for k in [
+                "fraud",
+                "forgery",
+                "counterfeit",
+                "scam",
+                "identity theft",
+                "embezzle",
+                "money laundering",
+            ]
+        ):
             return EventType.FRAUD
-        if any(k in val for k in ["warning", "watch", "advisory", "alert", "security", "disturbance"]):
+
+        # Public safety / disorder alerts
+        if any(
+            k in val
+            for k in [
+                "warning",
+                "watch",
+                "advisory",
+                "alert",
+                "security",
+                "disturbance",
+                "suspicious",
+                "trespass",
+                "vandalism",
+                "public safety",
+                "evacuation",
+            ]
+        ):
             return EventType.SECURITY
         return EventType.OTHER
 
     @staticmethod
     def _normalize_danger_level(type_text: str, details_text: str) -> DangerLevel:
-        text = f"{type_text} {details_text}".lower()
-        if any(k in text for k in ["homicide", "shoot", "armed", "weapon", "aggravated", "felony"]):
+        text = f"{type_text or ''} {details_text or ''}".lower()
+        if any(
+            k in text
+            for k in [
+                "homicide",
+                "murder",
+                "shoot",
+                "armed",
+                "weapon",
+                "aggravated",
+                "carjacking",
+                "kidnapping",
+                "rape",
+            ]
+        ):
             return DangerLevel.HIGH
-        if any(k in text for k in ["robbery", "burglary", "assault", "battery", "arson"]):
+        if any(
+            k in text
+            for k in [
+                "robbery",
+                "burglary",
+                "assault",
+                "battery",
+                "arson",
+                "fire",
+                "fraud",
+                "larceny",
+                "vehicle theft",
+            ]
+        ):
             return DangerLevel.MEDIUM
         return DangerLevel.LOW
 
     async def _fetch_rows(self, source: PublicSourceConfig, limit_per_source: int) -> List[Dict[str, Any]]:
-        if not self.session:
-            return []
         params = dict(source.params)
         params["$limit"] = str(limit_per_source)
         if SOCRATA_APP_TOKEN:
             params["$$app_token"] = SOCRATA_APP_TOKEN
-        try:
-            async with self.session.get(source.url, params=params) as resp:
-                if resp.status != 200:
-                    logger.error("Source %s returned status %s", source.name, resp.status)
-                    return []
-                payload = await resp.json()
-                if isinstance(payload, list):
-                    return payload
-                return []
-        except Exception as exc:
-            logger.error("Failed fetching %s: %s", source.name, exc)
-            return []
+        payload = await self._fetch_json(source.url, params=params, source_name=source.name)
+        if isinstance(payload, list):
+            return payload
+        return []
 
     def _resolve_community(self, community_name: str) -> Optional[Community]:
         if not self.db:
@@ -408,6 +499,33 @@ class PublicDataIngestor:
 
         return inserted, skipped
 
+    def reclassify_existing_events(self) -> Dict[str, int]:
+        if not self.db:
+            return {"checked": 0, "updated": 0}
+
+        checked = 0
+        updated = 0
+        events = self.db.query(Event).all()
+        for item in events:
+            checked += 1
+            text = " ".join(
+                [
+                    str(item.title or ""),
+                    str(item.description or ""),
+                    str(item.data_source or ""),
+                ]
+            )
+            new_type = self._normalize_event_type(text)
+            new_danger = self._normalize_danger_level(str(item.title or ""), str(item.description or ""))
+            if item.event_type != new_type or item.danger_level != new_danger:
+                item.event_type = new_type
+                item.danger_level = new_danger
+                updated += 1
+
+        if updated:
+            self.db.commit()
+        return {"checked": checked, "updated": updated}
+
     async def run_source(self, source: PublicSourceConfig, limit_per_source: int) -> Dict[str, Any]:
         community = self._resolve_community(source.community_name)
 
@@ -429,18 +547,63 @@ class PublicDataIngestor:
         }
 
     async def _fetch_geojson(self, url: str) -> Dict[str, Any]:
+        payload = await self._fetch_json(url, source_name=url)
+        if isinstance(payload, dict):
+            return payload
+        return {}
+
+    async def _respect_domain_rate(self, url: str) -> None:
+        netloc = urlparse(url).netloc.lower()
+        if not netloc:
+            return
+        last = self._domain_last_hit.get(netloc)
+        now = time.monotonic()
+        if last is not None:
+            wait_for = self._domain_min_interval_sec - (now - last)
+            if wait_for > 0:
+                await asyncio.sleep(wait_for + random.uniform(0.05, 0.18))
+        self._domain_last_hit[netloc] = time.monotonic()
+
+    async def _fetch_json(
+        self,
+        url: str,
+        params: Optional[Dict[str, Any]] = None,
+        source_name: Optional[str] = None,
+    ) -> Any:
         if not self.session:
             return {}
-        try:
-            async with self.session.get(url) as resp:
-                if resp.status != 200:
-                    logger.error("GeoJSON source %s returned status %s", url, resp.status)
-                    return {}
-                payload = await resp.json()
-                if isinstance(payload, dict):
-                    return payload
-        except Exception as exc:
-            logger.error("Failed fetching geojson %s: %s", url, exc)
+        name = source_name or url
+        max_attempts = 4
+        base_delay = 0.6
+
+        for attempt in range(1, max_attempts + 1):
+            await self._respect_domain_rate(url)
+            try:
+                async with self._request_sem:
+                    async with self.session.get(
+                        url,
+                        params=params,
+                        headers={"User-Agent": random.choice(self._user_agents)},
+                    ) as resp:
+                        if resp.status == 200:
+                            return await resp.json()
+                        if resp.status in (403, 404):
+                            logger.error("Source %s returned status %s", name, resp.status)
+                            return {}
+                        if resp.status in (429, 500, 502, 503, 504):
+                            if attempt < max_attempts:
+                                delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0.15, 0.5)
+                                await asyncio.sleep(delay)
+                                continue
+                        logger.error("Source %s returned status %s", name, resp.status)
+                        return {}
+            except Exception as exc:
+                if attempt < max_attempts:
+                    delay = base_delay * (2 ** (attempt - 1)) + random.uniform(0.15, 0.5)
+                    await asyncio.sleep(delay)
+                    continue
+                logger.error("Failed fetching %s: %s", name, exc)
+                return {}
         return {}
 
     def _normalize_usgs_features(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -596,6 +759,282 @@ class PublicDataIngestor:
             )
         return normalized
 
+    def _normalize_calfire_incidents(self, payload: Any) -> List[Dict[str, Any]]:
+        if isinstance(payload, dict):
+            rows = payload.get("incidents") or payload.get("Incidents") or []
+        elif isinstance(payload, list):
+            rows = payload
+        else:
+            rows = []
+
+        normalized = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            lat = self._safe_float(row.get("Latitude") or row.get("latitude"))
+            lng = self._safe_float(row.get("Longitude") or row.get("longitude"))
+            if lat is None or lng is None:
+                continue
+
+            title = str(row.get("Name") or row.get("name") or row.get("Title") or "Wildfire Incident")
+            location = str(row.get("Location") or row.get("location") or row.get("County") or "California")
+            details = str(
+                row.get("SearchDescription")
+                or row.get("description")
+                or row.get("Type")
+                or "CAL FIRE incident"
+            )
+            started = row.get("Started") or row.get("StartedDate") or row.get("Updated")
+            event_time = self._parse_datetime(str(started) if started else None)
+            incident_url = (
+                row.get("Url")
+                or row.get("url")
+                or row.get("Link")
+                or "https://www.fire.ca.gov/incidents/"
+            )
+
+            contained = self._safe_float(row.get("PercentContained") or row.get("percentContained"))
+            if contained is None:
+                danger = DangerLevel.HIGH
+            elif contained < 25:
+                danger = DangerLevel.HIGH
+            elif contained < 70:
+                danger = DangerLevel.MEDIUM
+            else:
+                danger = DangerLevel.LOW
+
+            community = infer_community(
+                self.db,
+                latitude=lat,
+                longitude=lng,
+                address=location,
+                zipcode=None,
+                max_distance_km=220.0,
+                allow_dynamic_core=False,
+                enforce_existing=True,
+            )
+            if not community:
+                continue
+
+            normalized.append(
+                {
+                    "title": f"{title} - {community.name}"[:200],
+                    "description": f"{details}. Source: CAL FIRE incidents feed.",
+                    "event_type": EventType.FIRE,
+                    "danger_level": danger,
+                    "community_id": community.id,
+                    "address": location[:255],
+                    "latitude": float(lat),
+                    "longitude": float(lng),
+                    "zipcode": community.zipcode,
+                    "event_time": event_time,
+                    "data_source": "CAL FIRE Incidents",
+                    "source_url": str(incident_url)[:500],
+                }
+            )
+        return normalized
+
+    def _normalize_eonet_events(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        events = payload.get("events") or []
+        normalized = []
+        for item in events:
+            geometry = item.get("geometry") or []
+            if not geometry:
+                continue
+            latest = geometry[-1]
+            coords = latest.get("coordinates") or []
+            gtype = latest.get("type")
+            lat = None
+            lng = None
+            if gtype == "Point" and isinstance(coords, list) and len(coords) >= 2:
+                lng = self._safe_float(coords[0])
+                lat = self._safe_float(coords[1])
+            if lat is None or lng is None:
+                continue
+
+            title = str(item.get("title") or "Natural hazard event")
+            categories = item.get("categories") or []
+            category_name = str(categories[0].get("title") if categories else "Hazard").lower()
+            source_url = "https://eonet.gsfc.nasa.gov/"
+            sources = item.get("sources") or []
+            if sources and isinstance(sources[0], dict):
+                source_url = str(sources[0].get("url") or source_url)
+
+            event_type = EventType.OTHER
+            danger = DangerLevel.MEDIUM
+            if "wildfire" in category_name or "fire" in category_name:
+                event_type = EventType.FIRE
+                danger = DangerLevel.HIGH
+            elif "volcano" in category_name or "earthquake" in category_name:
+                event_type = EventType.SHOOTING
+                danger = DangerLevel.HIGH
+            elif "storm" in category_name or "flood" in category_name:
+                event_type = EventType.FRAUD
+                danger = DangerLevel.MEDIUM
+            elif "drought" in category_name:
+                event_type = EventType.SECURITY
+                danger = DangerLevel.MEDIUM
+
+            event_time = self._parse_datetime(str(latest.get("date") or ""))
+            community = infer_community(
+                self.db,
+                latitude=lat,
+                longitude=lng,
+                address=title,
+                zipcode=None,
+                max_distance_km=220.0,
+                allow_dynamic_core=False,
+                enforce_existing=True,
+            )
+            if not community:
+                continue
+
+            normalized.append(
+                {
+                    "title": f"{title} - {community.name}"[:200],
+                    "description": f"{title}. Category: {category_name}. Source: NASA EONET.",
+                    "event_type": event_type,
+                    "danger_level": danger,
+                    "community_id": community.id,
+                    "address": title[:255],
+                    "latitude": float(lat),
+                    "longitude": float(lng),
+                    "zipcode": community.zipcode,
+                    "event_time": event_time,
+                    "data_source": "NASA EONET",
+                    "source_url": source_url[:500],
+                }
+            )
+        return normalized
+
+    def _normalize_philly_incidents(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        rows = payload.get("rows") or []
+        normalized = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            lat = self._safe_float(row.get("point_y") or row.get("lat") or row.get("latitude"))
+            lng = self._safe_float(row.get("point_x") or row.get("lon") or row.get("longitude") or row.get("lng"))
+            if lat is None or lng is None:
+                continue
+
+            offense = str(row.get("text_general_code") or row.get("ucr_general") or "Police incident").strip()
+            block = str(row.get("location_block") or row.get("block") or "Philadelphia").strip()
+            occurred = row.get("dispatch_date_time") or row.get("date") or row.get("reported_date")
+            event_time = self._parse_datetime(str(occurred) if occurred else None)
+
+            community = infer_community(
+                self.db,
+                latitude=lat,
+                longitude=lng,
+                address=block,
+                zipcode=None,
+                max_distance_km=220.0,
+                allow_dynamic_core=False,
+                enforce_existing=True,
+            )
+            if not community:
+                continue
+
+            details = (
+                f"Offense: {offense}. "
+                f"Block: {block}. "
+                f"Record ID: {row.get('dc_key') or row.get('objectid') or 'n/a'}. "
+                "Source: OpenDataPhilly (Carto)."
+            )
+            record_id = str(row.get("dc_key") or row.get("objectid") or f"phl-{abs(hash(str(row))) % 1000000}")
+            source_url = f"https://phl.carto.com/tables/incidents_part1_part2/public?dc_key={record_id}"
+
+            normalized.append(
+                {
+                    "title": f"{offense.title()} reported - {community.name}"[:200],
+                    "description": details[:1200],
+                    "event_type": self._normalize_event_type(offense),
+                    "danger_level": self._normalize_danger_level(offense, details),
+                    "community_id": community.id,
+                    "address": block[:255],
+                    "latitude": float(lat),
+                    "longitude": float(lng),
+                    "zipcode": community.zipcode,
+                    "event_time": event_time,
+                    "data_source": "OpenDataPhilly Crime Incidents",
+                    "source_url": source_url[:500],
+                }
+            )
+        return normalized
+
+    def _normalize_dc_mpd_incidents(self, payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+        features = payload.get("features") or []
+        normalized = []
+        for feature in features:
+            if not isinstance(feature, dict):
+                continue
+
+            attrs = feature.get("attributes") or {}
+            geom = feature.get("geometry") or {}
+            lat = self._safe_float(
+                attrs.get("LATITUDE")
+                or attrs.get("latitude")
+                or attrs.get("Y")
+                or geom.get("y")
+            )
+            lng = self._safe_float(
+                attrs.get("LONGITUDE")
+                or attrs.get("longitude")
+                or attrs.get("X")
+                or geom.get("x")
+            )
+            if lat is None or lng is None:
+                continue
+
+            offense = str(attrs.get("OFFENSE") or attrs.get("offense") or "Police incident").strip()
+            method = str(attrs.get("METHOD") or attrs.get("method") or "").strip()
+            block = str(attrs.get("BLOCK") or attrs.get("XBLOCK") or attrs.get("block") or "Washington, DC").strip()
+            reported = attrs.get("REPORT_DAT") or attrs.get("START_DATE") or attrs.get("report_date")
+            event_time = self._parse_datetime(str(reported) if reported else None)
+
+            community = infer_community(
+                self.db,
+                latitude=lat,
+                longitude=lng,
+                address=block,
+                zipcode=None,
+                max_distance_km=220.0,
+                allow_dynamic_core=False,
+                enforce_existing=True,
+            )
+            if not community:
+                continue
+
+            method_text = f" Method: {method}." if method else ""
+            details = (
+                f"Offense: {offense}.{method_text} "
+                f"Block: {block}. "
+                f"Record ID: {attrs.get('CCN') or attrs.get('OBJECTID') or 'n/a'}. "
+                "Source: DC MPD incidents feed."
+            )
+            record_id = str(attrs.get("CCN") or attrs.get("OBJECTID") or f"dc-{abs(hash(str(feature))) % 1000000}")
+            source_url = f"https://opendata.dc.gov/datasets/crime-incidents-in-2025/about?ccn={record_id}"
+
+            normalized.append(
+                {
+                    "title": f"{offense.title()} reported - {community.name}"[:200],
+                    "description": details[:1200],
+                    "event_type": self._normalize_event_type(offense),
+                    "danger_level": self._normalize_danger_level(offense, details),
+                    "community_id": community.id,
+                    "address": block[:255],
+                    "latitude": float(lat),
+                    "longitude": float(lng),
+                    "zipcode": community.zipcode,
+                    "event_time": event_time,
+                    "data_source": "DC MPD Crime Incidents",
+                    "source_url": source_url[:500],
+                }
+            )
+        return normalized
+
     async def run_live_feeds(self) -> List[Dict[str, Any]]:
         results = []
 
@@ -629,6 +1068,89 @@ class PublicDataIngestor:
             }
         )
 
+        calfire_payload = await self._fetch_json(
+            "https://www.fire.ca.gov/umbraco/api/IncidentApi/List",
+            params={"inactive": "false"},
+            source_name="CAL FIRE Incidents",
+        )
+        calfire_events = self._normalize_calfire_incidents(calfire_payload) if calfire_payload else []
+        calfire_inserted, calfire_skipped = self._save_events(calfire_events)
+        results.append(
+            {
+                "source": "CAL FIRE Incidents",
+                "fetched": len(calfire_payload) if isinstance(calfire_payload, list) else len(calfire_payload.get("incidents") or calfire_payload.get("Incidents") or []) if isinstance(calfire_payload, dict) else 0,
+                "normalized": len(calfire_events),
+                "inserted": calfire_inserted,
+                "skipped": calfire_skipped,
+            }
+        )
+
+        eonet_payload = await self._fetch_json(
+            "https://eonet.gsfc.nasa.gov/api/v3/events",
+            params={"status": "open", "limit": "120"},
+            source_name="NASA EONET",
+        )
+        eonet_events = self._normalize_eonet_events(eonet_payload) if isinstance(eonet_payload, dict) else []
+        eonet_inserted, eonet_skipped = self._save_events(eonet_events)
+        results.append(
+            {
+                "source": "NASA EONET",
+                "fetched": len((eonet_payload or {}).get("events") or []) if isinstance(eonet_payload, dict) else 0,
+                "normalized": len(eonet_events),
+                "inserted": eonet_inserted,
+                "skipped": eonet_skipped,
+            }
+        )
+
+        philly_payload = await self._fetch_json(
+            "https://phl.carto.com/api/v2/sql",
+            params={
+                "q": (
+                    "SELECT dc_key, dispatch_date_time, text_general_code, location_block, point_x, point_y "
+                    "FROM incidents_part1_part2 "
+                    "WHERE point_x IS NOT NULL AND point_y IS NOT NULL "
+                    "ORDER BY dispatch_date_time DESC LIMIT 160"
+                )
+            },
+            source_name="OpenDataPhilly Crime Incidents",
+        )
+        philly_events = self._normalize_philly_incidents(philly_payload) if isinstance(philly_payload, dict) else []
+        philly_inserted, philly_skipped = self._save_events(philly_events)
+        results.append(
+            {
+                "source": "OpenDataPhilly Crime Incidents",
+                "fetched": len((philly_payload or {}).get("rows") or []) if isinstance(philly_payload, dict) else 0,
+                "normalized": len(philly_events),
+                "inserted": philly_inserted,
+                "skipped": philly_skipped,
+            }
+        )
+
+        dc_payload = await self._fetch_json(
+            "https://maps2.dcgis.dc.gov/dcgis/rest/services/FEEDS/MPD/MapServer/0/query",
+            params={
+                "where": "1=1",
+                "outFields": "CCN,OFFENSE,METHOD,BLOCK,XBLOCK,LATITUDE,LONGITUDE,REPORT_DAT,START_DATE,OBJECTID",
+                "orderByFields": "REPORT_DAT DESC",
+                "returnGeometry": "true",
+                "resultRecordCount": "160",
+                "outSR": "4326",
+                "f": "json",
+            },
+            source_name="DC MPD Crime Incidents",
+        )
+        dc_events = self._normalize_dc_mpd_incidents(dc_payload) if isinstance(dc_payload, dict) else []
+        dc_inserted, dc_skipped = self._save_events(dc_events)
+        results.append(
+            {
+                "source": "DC MPD Crime Incidents",
+                "fetched": len((dc_payload or {}).get("features") or []) if isinstance(dc_payload, dict) else 0,
+                "normalized": len(dc_events),
+                "inserted": dc_inserted,
+                "skipped": dc_skipped,
+            }
+        )
+
         return results
 
     async def run_all(self, limit_per_source: int = 80) -> Dict[str, Any]:
@@ -636,7 +1158,7 @@ class PublicDataIngestor:
         for source in PUBLIC_SOURCES:
             result = await self.run_source(source, limit_per_source=limit_per_source)
             results.append(result)
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(random.uniform(0.35, 1.1))
 
         live_results = await self.run_live_feeds()
         results.extend(live_results)
@@ -675,6 +1197,7 @@ class SpiderScheduler:
             await ingestor.start()
             summary = await ingestor.run_all(limit_per_source=limit_per_source)
             if ingestor.db:
+                summary["event_reclassification"] = ingestor.reclassify_existing_events()
                 merge_summary = merge_auto_zone_communities(ingestor.db, distance_km=120.0, commit=True)
                 summary["auto_core_merge"] = merge_summary
                 rename_summary = rename_auto_zone_communities(ingestor.db, commit=True)

@@ -96,13 +96,25 @@
                 </span>
               </div>
               <div class="info-item">
-                <label>{{ t('source') }}</label>
+                <label>{{ t('sourcePlatform') }}</label>
+                <span>{{ event.dataSource || '-' }}</span>
+              </div>
+              <div class="info-item">
+                <label>{{ t('sourceLink') }}</label>
                 <span>
                   <a v-if="event.source_url" :href="event.source_url" target="_blank" rel="noopener noreferrer">
                     {{ event.source_url }}
                   </a>
-                  <span v-else>{{ event.dataSource }}</span>
+                  <span v-else>-</span>
                 </span>
+              </div>
+              <div class="info-item">
+                <label>{{ t('sourceRecordId') }}</label>
+                <span>{{ extractRecordId(event.source_url) || '-' }}</span>
+              </div>
+              <div class="info-item">
+                <label>{{ t('coordinates') }}</label>
+                <span>{{ formatCoordinates(event.latitude, event.longitude) }}</span>
               </div>
               <div class="info-item">
                 <label>{{ t('updated') }}</label>
@@ -154,6 +166,27 @@ const getEventColor = (type) => eventTypeColors[type] || '#999'
 const formatDateTime = (date) => dateUtils.formatDateTime(date)
 const formatDate = (date) => dateUtils.formatDate(date)
 const formatTime = (date) => dateUtils.daysAgo(date)
+const formatCoordinates = (lat, lng) => {
+  const nLat = Number(lat)
+  const nLng = Number(lng)
+  if (!Number.isFinite(nLat) || !Number.isFinite(nLng)) return '-'
+  return `${nLat.toFixed(5)}, ${nLng.toFixed(5)}`
+}
+const extractRecordId = (sourceUrl) => {
+  if (!sourceUrl) return ''
+  try {
+    const url = new URL(sourceUrl)
+    return (
+      url.searchParams.get('record_id') ||
+      url.searchParams.get('dc_key') ||
+      url.searchParams.get('ccn') ||
+      url.searchParams.get('id') ||
+      ''
+    )
+  } catch {
+    return ''
+  }
+}
 
 const loadEvent = async () => {
   loading.value = true
