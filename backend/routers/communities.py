@@ -62,8 +62,25 @@ async def list_communities(
     total = query.count()
     skip = (page - 1) * page_size
     communities = query.offset(skip).limit(page_size).all()
-    
-    return {"total": total, "communities": communities}
+
+    payload = []
+    for community in communities:
+        report_row = db.query(CommunityReport).filter(CommunityReport.community_id == community.id).first()
+        if report_row:
+            report = {
+                "highRiskPeriods": report_row.high_risk_periods,
+                "highRiskLocations": report_row.high_risk_locations,
+                "safetyTips": report_row.safety_tips,
+                "yoyComparison": report_row.yoy_comparison,
+            }
+        else:
+            report = upsert_community_report(db, community.id, commit=True)
+
+        item = {c.name: getattr(community, c.name) for c in community.__table__.columns}
+        item["report"] = report
+        payload.append(item)
+
+    return {"total": total, "communities": payload}
 
 
 @router.get("/{community_id}", response_model=CommunityDetailResponse)

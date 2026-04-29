@@ -9,7 +9,7 @@
         <router-link to="/" class="nav-item">{{ t('home') }}</router-link>
         <router-link to="/events" class="nav-item">{{ t('events') }}</router-link>
         <router-link to="/communities" class="nav-item">{{ t('reports') }}</router-link>
-        <router-link v-if="isLoggedIn && user" to="/user" class="nav-item">
+        <router-link v-if="isLoggedIn" to="/user" class="nav-item">
           {{ t('myProfile') }}
         </router-link>
       </nav>

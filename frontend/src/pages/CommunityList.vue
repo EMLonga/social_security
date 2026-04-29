@@ -13,8 +13,8 @@
           class="community-card"
         >
           <div class="community-card-content" @click="goToCommunity(community.id)">
-            <h3>{{ community.name }}</h3>
-            <p>{{ community.city }}, {{ community.state }}</p>
+            <h3>{{ localizeCommunityName(community.name, community.state, community.city) }}</h3>
+            <p>{{ localizeCommunityName(community.name, community.state, community.city) }}</p>
             <p>{{ t('safetyScore') }}: {{ community.safetyScore }}</p>
             <p>{{ t('safetyLevel') }}: {{ getSafetyLevelLabel(community.safetyLevel) }}</p>
             <p>
@@ -27,6 +27,16 @@
           </button>
         </div>
       </div>
+      <div v-if="total > pageSize" class="pagination-wrap">
+        <el-pagination
+          background
+          layout="prev, pager, next, jumper, ->, total"
+          :total="total"
+          :current-page="currentPage"
+          :page-size="pageSize"
+          @current-change="handlePageChange"
+        />
+      </div>
     </div>
   </div>
 </template>
@@ -37,24 +47,38 @@ import { useRouter } from 'vue-router'
 import { communityService } from '../services/api'
 import { useI18n } from '../utils/i18n'
 import { ElMessage } from 'element-plus'
-import { getSafetyLevelLabel } from '../utils/helpers'
+import { getSafetyLevelLabel, localizeCommunityName } from '../utils/helpers'
 
 const router = useRouter()
 const { t } = useI18n()
 const communities = ref([])
 const loading = ref(false)
+const total = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(20)
 
 const loadCommunities = async () => {
   loading.value = true
   try {
-    const res = await communityService.getCommunities({ page: 1, page_size: 20 })
+    const res = await communityService.getCommunities({
+      page: currentPage.value,
+      page_size: pageSize.value,
+      sort_by: 'safety_score',
+      sortOrder: 'desc',
+    })
     communities.value = res.data.communities || []
+    total.value = Number(res.data.total || 0)
   } catch (error) {
     ElMessage.error('Failed to load community reports')
     console.error(error)
   } finally {
     loading.value = false
   }
+}
+
+const handlePageChange = (page) => {
+  currentPage.value = page
+  loadCommunities()
 }
 
 const goToCommunity = (id) => {
@@ -108,5 +132,11 @@ onMounted(() => {
   padding: 40px;
   text-align: center;
   color: #888;
+}
+
+.pagination-wrap {
+  margin-top: 24px;
+  display: flex;
+  justify-content: center;
 }
 </style>

@@ -53,7 +53,7 @@
                 <h4 @click="goToEvent(event.id)" class="event-title">{{ event.title }}</h4>
                 <button class="remove-btn" @click="removeSavedEvent(event.id)">{{ t('remove') }}</button>
               </div>
-              <p class="event-meta">{{ event.community || event.community_id || event.communityId || t('community') }} - {{ formatTime(event.eventTime) }}</p>
+              <p class="event-meta">{{ localizeCommunityName(event.community || event.community_id || event.communityId || t('community'), event.communityState, event.communityCity) }} - {{ formatTime(event.eventTime) }}</p>
               <p class="event-desc">{{ truncateText(event.description, 80) }}</p>
             </div>
           </div>
@@ -67,10 +67,10 @@
           <div v-else class="communities-list">
             <div v-for="community in followedCommunities" :key="community.id" class="community-item">
               <div class="community-header">
-                <h4 @click="goToCommunity(community.id)" class="community-name">{{ community.name }}</h4>
+                <h4 @click="goToCommunity(community.id)" class="community-name">{{ localizeCommunityName(community.name, community.state, community.city) }}</h4>
                 <button class="remove-btn" @click="unfollowCommunity(community.id)">{{ t('unfollow') }}</button>
               </div>
-              <p class="community-meta">{{ community.state }}, {{ community.city }} - {{ t('safetyScore') }}: {{ community.safetyScore }}</p>
+              <p class="community-meta">{{ localizeCommunityName(community.name, community.state, community.city) }} - {{ t('safetyScore') }}: {{ community.safetyScore }}</p>
             </div>
           </div>
         </div>
@@ -101,7 +101,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '../stores/app'
 import { userService, eventService, communityService, commentService } from '../services/api'
-import { dateUtils } from '../utils/helpers'
+import { dateUtils, localizeCommunityName } from '../utils/helpers'
 import { ElMessage } from 'element-plus'
 import { useI18n } from '../utils/i18n'
 

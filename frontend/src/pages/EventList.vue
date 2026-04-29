@@ -12,18 +12,20 @@
           />
 
           <el-select v-model="filters.eventType" multiple :placeholder="t('eventType')" style="width: 150px">
-            <el-option :label="t('flood')" value="theft" />
-            <el-option :label="t('earthquake')" value="shooting" />
-            <el-option :label="t('fireRisk')" value="fire" />
-            <el-option :label="t('generalAlert')" value="security" />
-            <el-option :label="t('severeStorm')" value="fraud" />
+            <el-option :label="t('typeTheft')" value="theft" />
+            <el-option :label="t('typeViolent')" value="shooting" />
+            <el-option :label="t('typeFire')" value="fire" />
+            <el-option :label="t('typeSecurity')" value="security" />
+            <el-option :label="t('typeFraud')" value="fraud" />
+            <el-option :label="t('typeEarthquake')" value="earthquake" />
+            <el-option :label="t('otherHazard')" value="other" />
           </el-select>
 
           <el-select v-model="filters.community" :placeholder="t('community')" style="width: 170px" clearable>
             <el-option
               v-for="community in communities"
               :key="community.id"
-              :label="community.name"
+              :label="localizeCommunityName(community.name, community.state, community.city)"
               :value="community.id"
             />
           </el-select>
@@ -78,7 +80,7 @@
 
           <div class="event-info">
             <p><strong>{{ t('time') }}:</strong> {{ formatDateTime(event.eventTime) }}</p>
-            <p><strong>{{ t('location') }}:</strong> {{ event.address }}, {{ event.community }}</p>
+            <p><strong>{{ t('location') }}:</strong> {{ event.address }}, {{ localizeCommunityName(event.community, event.communityState, event.communityCity) }}</p>
             <p><strong>{{ t('source') }}:</strong> {{ event.dataSource }}</p>
           </div>
 
@@ -102,14 +104,15 @@
       </div>
 
       <div v-if="totalPages > 1" class="pagination">
-        <button
-          v-for="page in totalPages"
-          :key="page"
-          :class="{ active: currentPage === page }"
-          @click="goToPage(page)"
-        >
-          {{ page }}
-        </button>
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="totalCount"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="loadEvents"
+          @size-change="onPageSizeChange"
+        />
       </div>
     </div>
   </div>
@@ -119,7 +122,7 @@
 import { ref, onMounted, computed, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { eventService, communityService } from '../services/api'
-import { getEventTypeLabel, getDangerLevelLabel, dateUtils, eventTypeColors } from '../utils/helpers'
+import { getEventTypeLabel, getDangerLevelLabel, dateUtils, eventTypeColors, localizeCommunityName } from '../utils/helpers'
 import { useI18n } from '../utils/i18n'
 import { ElMessage } from 'element-plus'
 
@@ -129,7 +132,9 @@ const route = useRoute()
 const events = ref([])
 const loading = ref(false)
 const currentPage = ref(1)
-const pageSize = ref(10)
+const DEFAULT_EVENT_PAGE_SIZE = 10
+const COMMUNITY_SELECT_FETCH_LIMIT = 100
+const pageSize = ref(DEFAULT_EVENT_PAGE_SIZE)
 const totalCount = ref(0)
 const communities = ref([])
 
@@ -193,7 +198,11 @@ const resetFilters = () => {
 
 const loadCommunities = async () => {
   try {
-    const res = await communityService.getCommunities({ limit: 100, sortBy: 'safety_score', sortOrder: 'desc' })
+    const res = await communityService.getCommunities({
+      limit: COMMUNITY_SELECT_FETCH_LIMIT,
+      sortBy: 'safety_score',
+      sortOrder: 'desc',
+    })
     communities.value = res.data.communities || []
   } catch (error) {
     console.error('Failed to load communities', error)
@@ -204,8 +213,8 @@ const goDetail = (id) => {
   router.push(`/events/${id}`)
 }
 
-const goToPage = (page) => {
-  currentPage.value = page
+const onPageSizeChange = () => {
+  currentPage.value = 1
   loadEvents()
 }
 
@@ -437,29 +446,6 @@ watch(
   margin-bottom: 20px;
 }
 
-.pagination button {
-  padding: 8px 12px;
-  border: 1px solid var(--border-color);
-  background-color: var(--surface-color);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.3s;
-}
-
-.dark-mode .pagination button {
-  background-color: var(--surface-color);
-  border-color: var(--border-color);
-}
-
-.pagination button.active {
-  background-color: #409eff;
-  color: white;
-  border-color: #409eff;
-}
-
-.pagination button:hover:not(.active) {
-  border-color: #409eff;
-}
 
 @media (max-width: 768px) {
   .filter-row {

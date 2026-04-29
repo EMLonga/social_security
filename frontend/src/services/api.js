@@ -4,6 +4,9 @@ import { useUserStore } from '../stores/app'
 const apiClient = axios.create({
   baseURL: '/api',
   timeout: 10000,
+  paramsSerializer: {
+    indexes: null,
+  },
 })
 
 // Add token to requests
@@ -49,6 +52,14 @@ const normalizeEvent = (event) => {
     event.community_name ??
     event.communityName ??
     (typeof event.community === 'object' ? event.community?.name : event.community)
+  const communityState =
+    event.community_state ??
+    event.communityState ??
+    (typeof event.community === 'object' ? event.community?.state : undefined)
+  const communityCity =
+    event.community_city ??
+    event.communityCity ??
+    (typeof event.community === 'object' ? event.community?.city : undefined)
   const communityId = event.community_id ?? event.communityId
   return {
     ...event,
@@ -60,6 +71,8 @@ const normalizeEvent = (event) => {
     comment_count: event.comment_count ?? event.commentCount ?? 0,
     communityId,
     communityName,
+    communityState,
+    communityCity,
     community: communityName || (communityId ? `Community #${communityId}` : 'Community'),
     eventTime: event.event_time ?? event.eventTime,
     createdAt: event.created_at ?? event.createdAt,

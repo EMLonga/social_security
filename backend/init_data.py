@@ -120,7 +120,7 @@ def init_database():
         
         print("Creating events...")
         # Create sample events
-        event_types = [EventType.THEFT, EventType.SHOOTING, EventType.FIRE, EventType.SECURITY]
+        event_types = [EventType.THEFT, EventType.SHOOTING, EventType.FIRE, EventType.SECURITY, EventType.EARTHQUAKE]
         danger_levels = [DangerLevel.LOW, DangerLevel.MEDIUM, DangerLevel.HIGH]
         
         event_titles = [
@@ -141,9 +141,13 @@ def init_database():
                 danger_level = random.choice(danger_levels)
                 
                 event = Event(
-                    title=f"{event_titles[j % len(event_titles)]} - {community.name}",
-                    description=f"Incident occurred in {community.name} area. "
-                               f"Emergency services responded to the scene.",
+                    title=f"{event_titles[j % len(event_titles)]}",
+                    description=(
+                        f"Incident occurred in {community.city}, {community.state}. "
+                        f"Initial field report indicates active response by emergency services. "
+                        f"Community reference: {community.name}. "
+                        f"Residents are advised to follow official updates and avoid nearby affected blocks."
+                    ),
                     event_type=event_type,
                     danger_level=danger_level,
                     community_id=community.id,

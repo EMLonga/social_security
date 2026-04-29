@@ -18,7 +18,7 @@
               {{ getDangerLevelLabel(event.dangerLevel) }}
             </span>
             <span class="event-time">{{ formatDateTime(event.eventTime) }}</span>
-            <span class="event-location">{{ event.address }}, {{ event.communityName || event.community }}</span>
+            <span class="event-location">{{ event.address }}, {{ localizeCommunityName(event.communityName || event.community, event.communityState, event.communityCity) }}</span>
           </div>
         </div>
 
@@ -92,7 +92,7 @@
               <div class="info-item">
                 <label>{{ t('community') }}</label>
                 <span @click="goToCommunity(event.communityId)" style="cursor: pointer; color: #409eff">
-                  {{ event.communityName || event.community }}
+                  {{ localizeCommunityName(event.communityName || event.community, event.communityState, event.communityCity) }}
                 </span>
               </div>
               <div class="info-item">
@@ -135,7 +135,7 @@ import { ElMessage } from 'element-plus'
 import L from 'leaflet'
 import { useUserStore } from '../stores/app'
 import { commentService, eventService } from '../services/api'
-import { dateUtils, eventTypeColors, getDangerLevelLabel, getEventTypeLabel } from '../utils/helpers'
+import { dateUtils, eventTypeColors, getDangerLevelLabel, getEventTypeLabel, localizeCommunityName } from '../utils/helpers'
 import { useI18n } from '../utils/i18n'
 
 const router = useRouter()
@@ -343,7 +343,7 @@ const exportDetails = () => {
   if (!event.value) return
   const content = [
     `Event Title: ${event.value.title}`,
-    `Community: ${event.value.communityName || event.value.community}`,
+    `Community: ${localizeCommunityName(event.value.communityName || event.value.community, event.value.communityState, event.value.communityCity)}`,
     `Type: ${event.value.type}`,
     `Danger Level: ${event.value.dangerLevel}`,
     `Date: ${formatDateTime(event.value.eventTime)}`,

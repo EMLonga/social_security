@@ -4,18 +4,19 @@
 
 ## 1. 当前功能范围
 
-- 首页：世界地图底图（默认聚焦北美）、热点事件、Top5 社区。
-- 事件：列表筛选、详情地图、点赞、收藏、评论、分享与导出。
-- 社区：社区地图、图表、自动生成的社区报告。
-- 认证：登录/注册图形验证码、忘记密码邮箱验证码（30 秒冷却，5 分钟有效）。
-- 后台：事件/社区/评论/用户管理，评论标记与取消标记，抓取任务管理，站点配置。
-- 数据：公开数据源抓取、事件自动归属社区、社区自动评分与定时重算。
+- 首页：世界地图、热门事件、Top5 社区
+- 事件：列表筛选、详情地图、点赞、收藏、评论
+- 社区：社区详情、统计图表、社区报告
+- 认证：登录、注册、图形验证码、邮箱找回密码
+- 后台：事件/社区/评论/用户管理，抓取任务管理，站点配置
+- 数据：公开数据抓取、事件自动归属社区、社区评分自动计算
+- AI 助手：基于 OpenAI-compatible 接口的聊天能力
 
 ## 2. 技术栈
 
 - 前端：Vue 3 + Vite + Element Plus + Leaflet + ECharts + Pinia
 - 后端：FastAPI + SQLAlchemy + APScheduler
-- 数据库：PostgreSQL（当前默认）
+- 数据库：PostgreSQL
 
 ## 3. 快速启动
 
@@ -26,6 +27,12 @@
 ```powershell
 cmd /c start_all.bat
 ```
+
+默认会启动：
+
+- 前端：`http://127.0.0.1:5173`
+- 后端：`http://127.0.0.1:8000`
+- API 文档：`http://127.0.0.1:8000/docs`
 
 ### 3.2 手动启动
 
@@ -44,14 +51,8 @@ python main.py
 ```powershell
 cd frontend
 npm install
-npm run dev -- --host 0.0.0.0 --port 5174 --strictPort
+npm run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ```
-
-访问地址：
-
-- 前端：`http://localhost:5174`
-- 后端：`http://localhost:8000`
-- API 文档：`http://localhost:8000/docs`
 
 ## 4. 关键配置
 
@@ -59,20 +60,15 @@ npm run dev -- --host 0.0.0.0 --port 5174 --strictPort
 
 - `DATABASE_URL`：PostgreSQL 连接串
 - `JWT_SECRET_KEY`：JWT 密钥
-- `SOCRATA_APP_TOKEN`：城市公开数据源令牌（可选但建议配置）
+- `CORS_ORIGINS`：允许跨域来源
+- `SOCRATA_APP_TOKEN`：公开数据源令牌（可选）
 - `SMTP_*`、`EMAIL_DEV_MODE`：邮件验证码配置
-- `LLM_*`：AI 助手大模型配置（支持 OpenAI-compatible）
+- `LLM_API_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`：AI 助手配置
 
-## 5. 机制说明（当前版本）
-
-- 事件归属：按经纬度/地址自动推断社区；远距离事件自动创建核心社区并可聚类合并。
-- 地图点位：带防重叠分离逻辑，减少密集点遮挡。
-- 社区评分：由社区全部事件自动计算，分数越高表示越安全，并通过定时任务重算。
-
-## 6. 文档索引
+## 5. 文档索引
 
 - 产品需求：[社区安全预警系统PRD.zh-CN.md](./社区安全预警系统PRD.zh-CN.md)
-- 架构设计：[ARCHITECTURE.zh-CN.md](./ARCHITECTURE.zh-CN.md)
+- 架构说明：[ARCHITECTURE.zh-CN.md](./ARCHITECTURE.zh-CN.md)
 - API 文档：[API_DOCUMENTATION.zh-CN.md](./API_DOCUMENTATION.zh-CN.md)
 - 后端说明：[backend/README.zh-CN.md](./backend/README.zh-CN.md)
 - 前端说明：[frontend/README.zh-CN.md](./frontend/README.zh-CN.md)

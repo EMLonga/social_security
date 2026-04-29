@@ -40,6 +40,7 @@ class EventType(str, enum.Enum):
     FIRE = "fire"
     SECURITY = "security"
     FRAUD = "fraud"
+    EARTHQUAKE = "earthquake"
     OTHER = "other"
 
 

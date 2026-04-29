@@ -18,6 +18,7 @@
               <el-option :label="t('typeFire')" value="fire" />
               <el-option :label="t('typeSecurity')" value="security" />
               <el-option :label="t('typeFraud')" value="fraud" />
+              <el-option :label="t('typeEarthquake')" value="earthquake" />
             </el-select>
           </div>
           <div class="filter-group">
@@ -43,7 +44,7 @@
                   {{ getEventTypeLabel(event.type) }}
                 </div>
                 <h4>{{ event.title }}</h4>
-                <p class="event-meta">{{ event.community }} - {{ formatTime(event.eventTime) }}</p>
+                <p class="event-meta">{{ localizeCommunityName(event.community, event.communityState, event.communityCity) }} - {{ formatTime(event.eventTime) }}</p>
                 <p class="event-desc">{{ truncateText(event.description, 80) }}</p>
                 <div class="event-stats">
                   <span>{{ t('like') }} {{ event.likes }}</span>
@@ -59,7 +60,7 @@
               <div v-for="community in topCommunities" :key="community.id" class="index-item">
                 <div class="rank">{{ community.rank }}</div>
                 <div class="info">
-                  <h5>{{ community.name }}</h5>
+                  <h5>{{ localizeCommunityName(community.name, community.state, community.city) }}</h5>
                   <p>{{ community.state }}</p>
                 </div>
                 <div class="score">{{ community.safetyScore }}</div>
@@ -94,7 +95,7 @@ import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import L from 'leaflet'
 import { communityService, eventService } from '../services/api'
-import { dateUtils, eventTypeColors, getEventTypeLabel } from '../utils/helpers'
+import { dateUtils, eventTypeColors, getEventTypeLabel, localizeCommunityName } from '../utils/helpers'
 import { useI18n } from '../utils/i18n'
 
 const router = useRouter()
@@ -111,6 +112,10 @@ const todayNewEvents = ref(0)
 const isMapLoading = ref(false)
 
 let map = null
+const HOT_EVENTS_LIMIT = 10
+const MAP_EVENTS_PER_TYPE_LIMIT = 80
+const MAP_EVENTS_RENDER_LIMIT = 300
+const TOP_COMMUNITY_LIMIT = 5
 const HOME_MAP_BOUNDS = {
   minLat: 18,
   maxLat: 72,
@@ -133,7 +138,11 @@ const truncateText = (text, maxLen = 80) => {
 
 const goDetail = (id) => router.push(`/events/${id}`)
 const getEventCommunityLabel = (event) =>
-  event.communityName || event.community || (event.communityId ? `Community #${event.communityId}` : 'Community')
+  localizeCommunityName(
+    event.communityName || event.community || (event.communityId ? `Community #${event.communityId}` : 'Community'),
+    event.communityState,
+    event.communityCity
+  )
 
 const markerAngleByType = {
   theft: 0,
@@ -141,8 +150,10 @@ const markerAngleByType = {
   fire: 120,
   security: 180,
   fraud: 240,
-  other: 300,
+  earthquake: 300,
+  other: 330,
 }
+const HOME_EVENT_TYPES = ['theft', 'shooting', 'fire', 'security', 'fraud', 'earthquake', 'other']
 
 const buildSeparatedMarkerPoints = (events = []) => {
   const cellSize = 0.1
@@ -251,6 +262,57 @@ const inHomeMapBounds = (event) => {
   )
 }
 
+const sortEventsByTimeDesc = (events = []) => {
+  return [...events].sort((a, b) => {
+    const ta = new Date(a?.eventTime || a?.createdAt || 0).getTime()
+    const tb = new Date(b?.eventTime || b?.createdAt || 0).getTime()
+    return tb - ta
+  })
+}
+
+const fetchHomeMapEvents = async () => {
+  const baseParams = {
+    // backend page_size upper limit is 100
+    limit: MAP_EVENTS_PER_TYPE_LIMIT,
+    sortBy: 'publishTime',
+    timeRange: selectedTimeRange.value,
+  }
+
+  if (selectedEventType.value) {
+    return eventService.getEvents({
+      ...baseParams,
+      eventType: selectedEventType.value,
+    })
+  }
+
+  const responses = await Promise.allSettled(
+    HOME_EVENT_TYPES.map((type) =>
+      eventService.getEvents({
+        ...baseParams,
+        eventType: type,
+      })
+    )
+  )
+
+  const merged = []
+  const seenIds = new Set()
+  responses.forEach((res) => {
+    if (res.status !== 'fulfilled') return
+    const rows = res.value?.data?.events || []
+    rows.forEach((item) => {
+      if (seenIds.has(item.id)) return
+      seenIds.add(item.id)
+      merged.push(item)
+    })
+  })
+
+  return {
+    data: {
+      events: sortEventsByTimeDesc(merged).slice(0, MAP_EVENTS_RENDER_LIMIT),
+    },
+  }
+}
+
 const loadWorldGeojsonLayer = async (targetMap) => {
   for (const path of GEOJSON_CANDIDATE_PATHS) {
     try {
@@ -342,21 +404,16 @@ const initMap = async () => {
 }
 
 const loadData = async () => {
+  const mapEventsPromise = fetchHomeMapEvents()
   const [eventsRes, mapRes, communitiesRes] = await Promise.allSettled([
     eventService.getEvents({
-      limit: 10,
-      sortBy: 'likes',
+      limit: HOT_EVENTS_LIMIT,
+      sortBy: 'hot',
       timeRange: selectedTimeRange.value,
       eventType: selectedEventType.value || undefined,
     }),
-    eventService.getEvents({
-      // backend page_size upper limit is 100
-      limit: 100,
-      sortBy: 'publishTime',
-      timeRange: selectedTimeRange.value,
-      eventType: selectedEventType.value || undefined,
-    }),
-    communityService.getCommunities({ limit: 5, sortBy: 'safety_score', sortOrder: 'desc' }),
+    mapEventsPromise,
+    communityService.getCommunities({ limit: TOP_COMMUNITY_LIMIT, sortBy: 'safety_score', sortOrder: 'desc' }),
   ])
 
   if (eventsRes.status === 'fulfilled') {
@@ -384,7 +441,7 @@ const loadData = async () => {
   if (communitiesRes.status === 'fulfilled') {
     topCommunities.value = (communitiesRes.value.data.communities || [])
       .sort((a, b) => (b.safetyScore || 0) - (a.safetyScore || 0))
-      .slice(0, 5)
+      .slice(0, TOP_COMMUNITY_LIMIT)
       .map((item, idx) => ({ ...item, rank: idx + 1 }))
     totalCommunities.value = communitiesRes.value.data.total || 0
   } else {

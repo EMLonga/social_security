@@ -141,6 +141,44 @@ PUBLIC_SOURCES: List[PublicSourceConfig] = [
         longitude_fields=["longitude"],
         id_fields=["id", "case_number"],
     ),
+    PublicSourceConfig(
+        name="Seattle Open Data (Real-Time 911 Calls)",
+        url="https://data.seattle.gov/resource/kzjm-xkqj.json",
+        community_name="Seattle",
+        params={
+            "$limit": "80",
+            "$order": "datetime DESC",
+            "$where": "latitude IS NOT NULL AND longitude IS NOT NULL",
+        },
+        datetime_field="datetime",
+        date_field=None,
+        time_field=None,
+        type_fields=["event_clearance_description", "initial_type_group", "initial_type_description"],
+        description_fields=["initial_type_description", "event_clearance_description", "type"],
+        address_fields=["hundred_block_location", "zip_code"],
+        latitude_fields=["latitude"],
+        longitude_fields=["longitude"],
+        id_fields=["cad_event_number", "id"],
+    ),
+    PublicSourceConfig(
+        name="Austin Open Data (Crime Reports)",
+        url="https://data.austintexas.gov/resource/fdj4-gpfu.json",
+        community_name="Austin",
+        params={
+            "$limit": "80",
+            "$order": "occ_date_time DESC",
+            "$where": "latitude IS NOT NULL AND longitude IS NOT NULL",
+        },
+        datetime_field="occ_date_time",
+        date_field=None,
+        time_field=None,
+        type_fields=["highest_offense_description", "ucr_category"],
+        description_fields=["highest_offense_description", "offense_location_description", "ucr_category"],
+        address_fields=["address", "zip_code"],
+        latitude_fields=["latitude"],
+        longitude_fields=["longitude"],
+        id_fields=["incident_report_number", "go_primary_key"],
+    ),
 ]
 
 
@@ -187,6 +225,38 @@ class PublicDataIngestor:
             if text:
                 return text
         return None
+
+    @staticmethod
+    def _collect_values(row: Dict[str, Any], keys: List[str]) -> List[str]:
+        values: List[str] = []
+        seen = set()
+        for key in keys:
+            value = row.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if not text:
+                continue
+            norm = " ".join(text.split()).lower()
+            if norm in seen:
+                continue
+            seen.add(norm)
+            values.append(text)
+        return values
+
+    def _build_incident_narrative(self, row: Dict[str, Any], source: PublicSourceConfig) -> str:
+        narrative_keys = [
+            "incident_description", "description", "narrative", "summary", "details",
+            "event_clearance_description", "initial_type_description", "offense_location_description",
+            "location_description", "status_desc", "premis_desc", "primary_type",
+            "highest_offense_description", "text_general_code", "offense", "offense_text",
+        ]
+        merged_keys = source.description_fields + narrative_keys
+        fragments = self._collect_values(row, merged_keys)
+        if not fragments:
+            return ""
+        # Keep first few high-signal snippets; avoid overlong repeated text.
+        return " | ".join(fragments[:4])[:900]
 
     @staticmethod
     def _parse_datetime(raw: Optional[str]) -> datetime:
@@ -237,6 +307,22 @@ class PublicDataIngestor:
     def _normalize_event_type(text: str) -> EventType:
         val = (text or "").lower()
 
+        # Earthquake / seismic events
+        if any(
+            k in val
+            for k in [
+                "earthquake",
+                "seismic",
+                "tremor",
+                "aftershock",
+                "foreshock",
+                "magnitude",
+                "richter",
+                "quake",
+            ]
+        ):
+            return EventType.EARTHQUAKE
+
         # Property crime
         if any(
             k in val
@@ -250,6 +336,13 @@ class PublicDataIngestor:
                 "motor vehicle theft",
                 "auto theft",
                 "breaking and entering",
+                "b&e",
+                "grand theft",
+                "petit theft",
+                "property crime",
+                "stolen vehicle",
+                "vehicle stolen",
+                "trespass of vehicle",
             ]
         ):
             return EventType.THEFT
@@ -269,12 +362,31 @@ class PublicDataIngestor:
                 "rape",
                 "kidnapping",
                 "carjacking",
+                "domestic violence",
+                "domestic assault",
+                "home invasion",
+                "homicide investigation",
+                "shots fired",
             ]
         ):
             return EventType.SHOOTING
 
         # Fire and arson
-        if any(k in val for k in ["fire", "wildfire", "arson", "explosion", "red flag"]):
+        if any(
+            k in val
+            for k in [
+                "fire",
+                "wildfire",
+                "arson",
+                "explosion",
+                "red flag",
+                "smoke",
+                "brush fire",
+                "structure fire",
+                "alarm fire",
+                "burn",
+            ]
+        ):
             return EventType.FIRE
 
         # Fraud and white-collar offense
@@ -288,6 +400,12 @@ class PublicDataIngestor:
                 "identity theft",
                 "embezzle",
                 "money laundering",
+                "wire fraud",
+                "credit card fraud",
+                "phishing",
+                "imposter",
+                "fake check",
+                "forged",
             ]
         ):
             return EventType.FRAUD
@@ -307,6 +425,13 @@ class PublicDataIngestor:
                 "vandalism",
                 "public safety",
                 "evacuation",
+                "missing person",
+                "traffic hazard",
+                "road closure",
+                "hazmat",
+                "civil unrest",
+                "disturbing the peace",
+                "noise complaint",
             ]
         ):
             return EventType.SECURITY
@@ -410,6 +535,7 @@ class PublicDataIngestor:
     ) -> Optional[Dict[str, Any]]:
         type_text = self._pick_value(row, source.type_fields) or "other"
         details_text = self._pick_value(row, source.description_fields) or type_text
+        narrative_text = self._build_incident_narrative(row, source)
         address_text = self._pick_value(row, source.address_fields) or (default_community.city if default_community else "")
         latitude = self._safe_float(self._pick_value(row, source.latitude_fields))
         longitude = self._safe_float(self._pick_value(row, source.longitude_fields))
@@ -424,7 +550,7 @@ class PublicDataIngestor:
             address=address_text,
             zipcode=zip_text,
             max_distance_km=180.0,
-            allow_dynamic_core=False,
+            allow_dynamic_core=True,
             enforce_existing=True,
         )
         if not community:
@@ -439,13 +565,31 @@ class PublicDataIngestor:
             dt_text = self._combine_date_time(date_part, time_part)
             event_time = self._parse_datetime(dt_text)
 
-        record_id = self._pick_value(row, source.id_fields) or f"{community.id}-{abs(hash(str(row))) % 1000000}"
-        title = f"{type_text.title()} reported - {community.name}"
-        description = f"{details_text}. Source: {source.name}"
-        source_url = f"{source.url}?record_id={record_id}"
-
-        event_type = self._normalize_event_type(type_text)
+        classification_text = " ".join([type_text or "", details_text or "", address_text or ""])
+        event_type = self._normalize_event_type(classification_text)
         danger_level = self._normalize_danger_level(type_text, details_text)
+        record_id = self._pick_value(row, source.id_fields) or f"{community.id}-{abs(hash(str(row))) % 1000000}"
+        title = f"{type_text.title()} reported"
+        when_text = event_time.isoformat() if event_time else "unknown"
+        if narrative_text:
+            description = (
+                f"Incident narrative: {narrative_text}. "
+                f"Type: {type_text or 'unknown'}. "
+                f"Danger: {danger_level.value if hasattr(danger_level, 'value') else danger_level}. "
+                f"Location: {address_text or community.name}. "
+                f"Time: {when_text}. "
+                f"Source: {source.name}."
+            )
+        else:
+            description = (
+                f"Type: {type_text or 'unknown'}. "
+                f"Danger: {danger_level.value if hasattr(danger_level, 'value') else danger_level}. "
+                f"Location: {address_text or community.name}. "
+                f"Time: {when_text}. "
+                f"Details: {details_text or 'No additional details provided.'}. "
+                f"Source: {source.name}."
+            )
+        source_url = f"{source.url}?record_id={record_id}"
 
         return {
             "title": title[:200],
@@ -626,7 +770,7 @@ class PublicDataIngestor:
                 address=None,
                 zipcode=None,
                 max_distance_km=220.0,
-                allow_dynamic_core=False,
+                allow_dynamic_core=True,
                 enforce_existing=True,
             )
             if not community:
@@ -635,7 +779,7 @@ class PublicDataIngestor:
             props = feature.get("properties") or {}
             mag = props.get("mag")
             place = props.get("place") or community.name
-            title = props.get("title") or f"Earthquake detected near {community.name}"
+            title = props.get("title") or "Earthquake detected"
             details_url = props.get("url") or "https://earthquake.usgs.gov/"
             ts = props.get("time")
             event_time = datetime.now(timezone.utc)
@@ -659,8 +803,14 @@ class PublicDataIngestor:
             normalized.append(
                 {
                     "title": str(title)[:200],
-                    "description": f"USGS seismic event near {place}. Magnitude: {mag}.",
-                    "event_type": EventType.SHOOTING,
+                    "description": (
+                        f"USGS seismic event. Location: {place}. "
+                        f"Magnitude: {mag}. "
+                        f"Danger: {danger.value}. "
+                        f"Time: {event_time.isoformat()}. "
+                        "Source: USGS Earthquake Feed."
+                    ),
+                    "event_type": EventType.EARTHQUAKE,
                     "danger_level": danger,
                     "community_id": community.id,
                     "address": str(place)[:255],
@@ -709,7 +859,7 @@ class PublicDataIngestor:
                 address=None,
                 zipcode=None,
                 max_distance_km=220.0,
-                allow_dynamic_core=False,
+                allow_dynamic_core=True,
                 enforce_existing=True,
             )
             if not community:
@@ -743,8 +893,14 @@ class PublicDataIngestor:
 
             normalized.append(
                 {
-                    "title": f"{event_name} - {community.name}"[:200],
-                    "description": f"{headline}. {str(desc)[:900]}",
+                    "title": f"{event_name}"[:200],
+                    "description": (
+                        f"Headline: {headline}. "
+                        f"Danger: {danger.value}. "
+                        f"Area: {area}. "
+                        f"Details: {str(desc)[:800]}. "
+                        "Source: NWS Alerts API."
+                    ),
                     "event_type": event_type,
                     "danger_level": danger,
                     "community_id": community.id,
@@ -810,7 +966,7 @@ class PublicDataIngestor:
                 address=location,
                 zipcode=None,
                 max_distance_km=220.0,
-                allow_dynamic_core=False,
+                allow_dynamic_core=True,
                 enforce_existing=True,
             )
             if not community:
@@ -818,8 +974,14 @@ class PublicDataIngestor:
 
             normalized.append(
                 {
-                    "title": f"{title} - {community.name}"[:200],
-                    "description": f"{details}. Source: CAL FIRE incidents feed.",
+                    "title": f"{title}"[:200],
+                    "description": (
+                        f"Incident: {title}. "
+                        f"Danger: {danger.value}. "
+                        f"Location: {location}. "
+                        f"Details: {details}. "
+                        "Source: CAL FIRE incidents feed."
+                    ),
                     "event_type": EventType.FIRE,
                     "danger_level": danger,
                     "community_id": community.id,
@@ -866,7 +1028,7 @@ class PublicDataIngestor:
                 event_type = EventType.FIRE
                 danger = DangerLevel.HIGH
             elif "volcano" in category_name or "earthquake" in category_name:
-                event_type = EventType.SHOOTING
+                event_type = EventType.EARTHQUAKE
                 danger = DangerLevel.HIGH
             elif "storm" in category_name or "flood" in category_name:
                 event_type = EventType.FRAUD
@@ -883,7 +1045,7 @@ class PublicDataIngestor:
                 address=title,
                 zipcode=None,
                 max_distance_km=220.0,
-                allow_dynamic_core=False,
+                allow_dynamic_core=True,
                 enforce_existing=True,
             )
             if not community:
@@ -891,8 +1053,14 @@ class PublicDataIngestor:
 
             normalized.append(
                 {
-                    "title": f"{title} - {community.name}"[:200],
-                    "description": f"{title}. Category: {category_name}. Source: NASA EONET.",
+                    "title": f"{title}"[:200],
+                    "description": (
+                        f"Event: {title}. "
+                        f"Category: {category_name}. "
+                        f"Danger: {danger.value}. "
+                        f"Approx location: {community.city}, {community.state}. "
+                        "Source: NASA EONET."
+                    ),
                     "event_type": event_type,
                     "danger_level": danger,
                     "community_id": community.id,
@@ -931,7 +1099,7 @@ class PublicDataIngestor:
                 address=block,
                 zipcode=None,
                 max_distance_km=220.0,
-                allow_dynamic_core=False,
+                allow_dynamic_core=True,
                 enforce_existing=True,
             )
             if not community:
@@ -948,7 +1116,7 @@ class PublicDataIngestor:
 
             normalized.append(
                 {
-                    "title": f"{offense.title()} reported - {community.name}"[:200],
+                    "title": f"{offense.title()} reported"[:200],
                     "description": details[:1200],
                     "event_type": self._normalize_event_type(offense),
                     "danger_level": self._normalize_danger_level(offense, details),
@@ -1001,7 +1169,7 @@ class PublicDataIngestor:
                 address=block,
                 zipcode=None,
                 max_distance_km=220.0,
-                allow_dynamic_core=False,
+                allow_dynamic_core=True,
                 enforce_existing=True,
             )
             if not community:

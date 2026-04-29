@@ -57,11 +57,13 @@
             <h2>{{ t('adminEventManagement') }}</h2>
             <div class="filters">
               <el-select v-model="eventFilterType" :placeholder="t('eventType')" clearable @change="onEventFilterChange">
-                <el-option :label="t('flood')" value="theft" />
-                <el-option :label="t('earthquake')" value="shooting" />
-                <el-option :label="t('fireRisk')" value="fire" />
-                <el-option :label="t('generalAlert')" value="security" />
-                <el-option :label="t('severeStorm')" value="fraud" />
+                <el-option :label="t('typeTheft')" value="theft" />
+                <el-option :label="t('typeViolent')" value="shooting" />
+                <el-option :label="t('typeFire')" value="fire" />
+                <el-option :label="t('typeSecurity')" value="security" />
+                <el-option :label="t('typeFraud')" value="fraud" />
+                <el-option :label="t('typeEarthquake')" value="earthquake" />
+                <el-option :label="t('otherHazard')" value="other" />
               </el-select>
               <el-button @click="loadAdminEvents">{{ t('adminRefresh') }}</el-button>
             </div>
@@ -283,11 +285,12 @@
         <el-form-item :label="t('description')"><el-input v-model="eventEditForm.description" type="textarea" /></el-form-item>
         <el-form-item :label="t('adminType')">
           <el-select v-model="eventEditForm.event_type">
-            <el-option :label="t('flood')" value="theft" />
-            <el-option :label="t('earthquake')" value="shooting" />
-            <el-option :label="t('fireRisk')" value="fire" />
-            <el-option :label="t('generalAlert')" value="security" />
-            <el-option :label="t('severeStorm')" value="fraud" />
+            <el-option :label="t('typeTheft')" value="theft" />
+            <el-option :label="t('typeViolent')" value="shooting" />
+            <el-option :label="t('typeFire')" value="fire" />
+            <el-option :label="t('typeSecurity')" value="security" />
+            <el-option :label="t('typeFraud')" value="fraud" />
+            <el-option :label="t('typeEarthquake')" value="earthquake" />
             <el-option :label="t('otherHazard')" value="other" />
           </el-select>
         </el-form-item>
@@ -390,11 +393,12 @@ const adminMenuItems = computed(() => [
 const getEventTypeDisplay = (value) => {
   const key = String(value || '').toLowerCase()
   const labels = {
-    theft: t('flood'),
-    shooting: t('earthquake'),
-    fire: t('fireRisk'),
-    security: t('generalAlert'),
-    fraud: t('severeStorm'),
+    theft: t('typeTheft'),
+    shooting: t('typeViolent'),
+    fire: t('typeFire'),
+    security: t('typeSecurity'),
+    fraud: t('typeFraud'),
+    earthquake: t('typeEarthquake'),
     other: t('otherHazard'),
   }
   return labels[key] || key || t('adminUnknown')

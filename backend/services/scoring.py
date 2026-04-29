@@ -13,11 +13,12 @@ DANGER_WEIGHT = {
 }
 
 TYPE_WEIGHT = {
-    EventType.THEFT: 1.6,  # Flood
-    EventType.SHOOTING: 1.8,  # Earthquake
-    EventType.FIRE: 1.7,  # Fire risk
-    EventType.FRAUD: 1.5,  # Severe storm
-    EventType.SECURITY: 1.2,  # General alert
+    EventType.THEFT: 1.6,
+    EventType.SHOOTING: 1.8,
+    EventType.FIRE: 1.7,
+    EventType.FRAUD: 1.5,
+    EventType.SECURITY: 1.2,
+    EventType.EARTHQUAKE: 1.1,  # Keep base impact mild; danger_level still scales severity.
     EventType.OTHER: 1.0,
 }
 
@@ -50,6 +51,16 @@ def _event_weight(event: Event, now_utc: datetime) -> float:
 
     danger_weight = DANGER_WEIGHT.get(event.danger_level, 1.0)
     type_weight = TYPE_WEIGHT.get(event.event_type, 1.0)
+    # Earthquake impact is usually broad but low-severity quakes should not
+    # dominate community safety drops.
+    if event.event_type == EventType.EARTHQUAKE:
+        if event.danger_level == DangerLevel.LOW:
+            type_weight *= 0.35
+        elif event.danger_level == DangerLevel.MEDIUM:
+            type_weight *= 0.6
+        else:
+            type_weight *= 0.9
+
     return danger_weight * type_weight * recency_weight
 
 

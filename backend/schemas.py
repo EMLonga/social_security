@@ -141,6 +141,7 @@ class CommunityResponse(CommunitySimpleResponse):
     population: Optional[int]
     trend: str
     created_at: datetime
+    report: Optional["CommunityReport"] = None
 
 
 class CommunityReport(BaseModel):
@@ -274,3 +275,4 @@ class CommentListResponse(BaseModel):
 
 # Update forward references
 EventDetailResponse.update_forward_refs()
+CommunityResponse.update_forward_refs()

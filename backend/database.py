@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from config import settings
 from models import Base
@@ -31,4 +31,10 @@ def create_tables():
 
 def init_db():
     """Initialize database with tables"""
+    # Keep PostgreSQL enum in sync when new EventType values are introduced.
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(
+                text("ALTER TYPE eventtype ADD VALUE IF NOT EXISTS 'EARTHQUAKE'")
+            )
     create_tables()

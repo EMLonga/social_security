@@ -11,6 +11,35 @@ from services.community_intelligence import infer_community, upsert_community_re
 
 router = APIRouter(prefix="/api/events", tags=["events"])
 
+EARTHQUAKE_MAX_RATIO = 0.4
+
+
+def _cap_earthquake_mix(ordered_events: List[Event], max_ratio: float = EARTHQUAKE_MAX_RATIO) -> List[Event]:
+    if not ordered_events:
+        return []
+
+    non_eq_count = sum(1 for item in ordered_events if item.event_type != EventType.EARTHQUAKE)
+    eq_count = len(ordered_events) - non_eq_count
+    if eq_count <= 0:
+        return ordered_events
+    if non_eq_count <= 0:
+        return ordered_events
+
+    # Ensure earthquake share <= max_ratio:
+    # eq_allowed / (eq_allowed + non_eq_count) <= max_ratio
+    eq_allowed = int((non_eq_count * max_ratio) / max(1e-6, (1.0 - max_ratio)))
+    eq_allowed = max(0, min(eq_count, eq_allowed))
+
+    kept: List[Event] = []
+    eq_used = 0
+    for item in ordered_events:
+        if item.event_type == EventType.EARTHQUAKE:
+            if eq_used >= eq_allowed:
+                continue
+            eq_used += 1
+        kept.append(item)
+    return kept
+
 
 @router.post("", response_model=EventResponse)
 async def create_event(
@@ -29,7 +58,7 @@ async def create_event(
         address=payload.address,
         zipcode=payload.zipcode,
         max_distance_km=180.0,
-        allow_dynamic_core=False,
+        allow_dynamic_core=True,
         enforce_existing=True,
     )
     if not inferred:
@@ -57,6 +86,8 @@ async def create_event(
     return {
         **{c.name: getattr(db_event, c.name) for c in db_event.__table__.columns},
         "community_name": inferred.name,
+        "community_state": inferred.state,
+        "community_city": inferred.city,
         "comment_count": 0,
         "liked": False,
         "saved": False,
@@ -93,6 +124,8 @@ async def list_events(
         page_size = limit
     if eventType is not None:
         eventTypes = eventTypes or [eventType]
+    if eventTypes and len(eventTypes) == 1 and isinstance(eventTypes[0], str) and "," in eventTypes[0]:
+        eventTypes = [item.strip() for item in eventTypes[0].split(",") if item.strip()]
     if timeRange is not None:
         time_range = timeRange
     if dangerLevel is not None:
@@ -144,19 +177,30 @@ async def list_events(
         )
     
     # Apply sorting
-    if sort_by == "likes":
+    if sort_by == "hot":
+        hot_score = (Event.like_count * 2.0) + (Event.comment_count * 1.5)
+        query = query.order_by(hot_score.desc(), Event.created_at.desc())
+    elif sort_by == "likes":
         query = query.order_by(Event.like_count.desc())
     elif sort_by == "comments":
         query = query.order_by(Event.comment_count.desc())
     else:
         query = query.order_by(Event.created_at.desc())
     
-    # Get total count
-    total = query.count()
-    
-    # Paginate
     skip = (page - 1) * page_size
-    events = query.offset(skip).limit(page_size).all()
+    raw_total = query.count()
+    use_mix_cap = not (eventTypes or event_type)
+
+    if use_mix_cap:
+        ordered_events = query.all()
+        mixed_events = _cap_earthquake_mix(ordered_events, EARTHQUAKE_MAX_RATIO)
+        # Keep total aligned with database-filtered raw count.
+        # The mix cap only controls which rows are displayed on the current page.
+        total = raw_total
+        events = mixed_events[skip: skip + page_size]
+    else:
+        total = raw_total
+        events = query.offset(skip).limit(page_size).all()
     event_ids = [item.id for item in events]
     community_ids = list({item.community_id for item in events if item.community_id is not None})
 
@@ -173,14 +217,21 @@ async def list_events(
         )
         visible_comment_count_map = {event_id: count for event_id, count in rows}
 
-    community_name_map = {}
+    community_map = {}
     if community_ids:
         community_rows = (
-            db.query(Community.id, Community.name)
+            db.query(Community.id, Community.name, Community.state, Community.city)
             .filter(Community.id.in_(community_ids))
             .all()
         )
-        community_name_map = {community_id: community_name for community_id, community_name in community_rows}
+        community_map = {
+            community_id: {
+                "name": community_name,
+                "state": community_state,
+                "city": community_city,
+            }
+            for community_id, community_name, community_state, community_city in community_rows
+        }
     
     # Add user-specific fields
     event_list = []
@@ -188,8 +239,10 @@ async def list_events(
         event_dict = {
             **{c.name: getattr(event, c.name) for c in event.__table__.columns},
             "comment_count": visible_comment_count_map.get(event.id, 0),
-            "community_name": community_name_map.get(event.community_id),
-            "community": community_name_map.get(event.community_id),
+            "community_name": (community_map.get(event.community_id) or {}).get("name"),
+            "community_state": (community_map.get(event.community_id) or {}).get("state"),
+            "community_city": (community_map.get(event.community_id) or {}).get("city"),
+            "community": (community_map.get(event.community_id) or {}).get("name"),
             "liked": bool(current_user and event in current_user.liked_events) if current_user else False,
             "saved": bool(current_user and event in current_user.saved_events) if current_user else False,
         }
@@ -223,6 +276,9 @@ async def get_event(
         **{c.name: getattr(event, c.name) for c in event.__table__.columns},
         "comment_count": visible_comment_count or 0,
         "community": event.community,
+        "community_name": event.community.name if event.community else None,
+        "community_state": event.community.state if event.community else None,
+        "community_city": event.community.city if event.community else None,
         "comments": event.comments,
         "liked": bool(current_user and event in current_user.liked_events) if current_user else False,
         "saved": bool(current_user and event in current_user.saved_events) if current_user else False,

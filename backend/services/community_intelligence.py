@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from math import cos, pi, sqrt
+from pathlib import Path
+import json
 import re
+from collections import defaultdict
 from typing import Dict, List, Optional
 
 from sqlalchemy import text
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from models import Community, CommunityReport, DangerLevel, Event
+from models import EventType
 
 
 CORE_COMMUNITIES = [
@@ -53,6 +58,8 @@ CORE_COMMUNITIES = [
         "area": 45.0,
     },
 ]
+
+CORE_COMMUNITIES_FILE = Path(__file__).resolve().parent.parent / "core_communities.generated.json"
 
 US_REGION_BOUNDS = [
     # Continental US
@@ -100,10 +107,58 @@ US_STATE_NAME_TO_CODE = {
 }
 
 
+def _load_core_communities_template() -> List[Dict]:
+    if CORE_COMMUNITIES_FILE.exists():
+        try:
+            with CORE_COMMUNITIES_FILE.open("r", encoding="utf-8") as f:
+                payload = json.load(f)
+            rows = payload.get("core_communities", []) if isinstance(payload, dict) else []
+            if isinstance(rows, list) and rows:
+                return rows
+        except Exception:
+            pass
+    return CORE_COMMUNITIES
+
+
+def _save_core_communities_template(rows: List[Dict]) -> None:
+    payload = {
+        "frozen_at": datetime.now(timezone.utc).isoformat(),
+        "core_communities": rows,
+    }
+    with CORE_COMMUNITIES_FILE.open("w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+
+
+def _append_core_template_if_missing(community: Community) -> None:
+    rows = _load_core_communities_template()
+    names = {item.get("name") for item in rows if item.get("name")}
+    if community.name in names:
+        return
+    rows.append(
+        {
+            "name": community.name,
+            "state": community.state or "US",
+            "city": community.city or "Core",
+            "zipcode": community.zipcode,
+            "latitude": float(community.latitude or 0.0),
+            "longitude": float(community.longitude or 0.0),
+            "population": int(community.population or 300000),
+            "area": float(community.area or 40.0),
+        }
+    )
+    _save_core_communities_template(rows)
+
+
 def ensure_core_communities(db: Session, commit: bool = True) -> Dict:
+    # Guardrail: only initialize when community table is empty.
+    # Avoid re-inflating hundreds of template communities on every crawler start.
+    if db.query(Community.id).first():
+        return {"created": 0, "total": db.query(Community).count()}
+
+    templates = _load_core_communities_template()
     existing = {item.name for item in db.query(Community).all()}
     created = 0
-    for item in CORE_COMMUNITIES:
+    for item in templates:
         if item["name"] in existing:
             continue
         db.add(Community(**item))
@@ -142,10 +197,20 @@ def infer_community(
     allow_dynamic_core: bool = False,
     enforce_existing: bool = True,
 ) -> Optional[Community]:
-    communities = db.query(Community).all()
+    templates = _load_core_communities_template()
+    template_names = {item.get("name") for item in templates if item.get("name")}
+    communities = (
+        db.query(Community).filter(Community.name.in_(template_names)).all()
+        if template_names
+        else db.query(Community).all()
+    )
     if not communities:
         ensure_core_communities(db, commit=True)
-        communities = db.query(Community).all()
+        communities = (
+            db.query(Community).filter(Community.name.in_(template_names)).all()
+            if template_names
+            else db.query(Community).all()
+        )
     if not communities:
         return None
 
@@ -155,26 +220,55 @@ def infer_community(
     if latitude is not None and longitude is not None and not is_us_coordinate(latitude, longitude):
         return None
 
+    parsed_state = (_extract_state_from_address(address) or "").upper().strip()
+    city_candidates = _extract_place_candidates_from_address(address)
+    parsed_city = city_candidates[0].strip().lower() if city_candidates else ""
+    valid_city_for_core = _is_valid_core_city_name(city_candidates[0] if city_candidates else "")
+
+    def _distance_or_inf(c: Community) -> float:
+        if latitude is None or longitude is None or c.latitude is None or c.longitude is None:
+            return 10**9
+        return _distance_km(float(latitude), float(longitude), float(c.latitude), float(c.longitude))
+
+    # 1) exact city+state hit
+    if parsed_state and parsed_city:
+        exact = [
+            c for c in communities
+            if (c.state or "").upper().strip() == parsed_state and (c.city or "").strip().lower() == parsed_city
+        ]
+        if exact:
+            exact_sorted = sorted(exact, key=_distance_or_inf)
+            return exact_sorted[0]
+        # No exact hit -> create a new core community when expansion is enabled.
+        if allow_dynamic_core and latitude is not None and longitude is not None and valid_city_for_core:
+            return get_or_create_dynamic_core_community(
+                db,
+                latitude=float(latitude),
+                longitude=float(longitude),
+                address=address,
+                zipcode=zipcode,
+            )
+
+    # 2) fallback to previous generic scoring when state/city cannot be parsed.
     best = None
     best_score = 10**9
     best_raw_distance = 10**9
     for community in communities:
         score = 1000.0
-        raw_distance = 10**9
-        if latitude is not None and longitude is not None and community.latitude is not None and community.longitude is not None:
-            raw_distance = _distance_km(float(latitude), float(longitude), float(community.latitude), float(community.longitude))
+        raw_distance = _distance_or_inf(community)
+        if raw_distance < 10**9:
             score = raw_distance
 
         if zip_text and community.zipcode and str(community.zipcode).strip() == zip_text:
             score -= 60.0
 
-        city_hit = community.city and community.city.lower() in text
-        state_hit = community.state and community.state.lower() in text
+        city_hit = parsed_city and community.city and community.city.strip().lower() == parsed_city
+        state_hit = parsed_state and community.state and community.state.strip().upper() == parsed_state
         name_hit = community.name and community.name.lower() in text
         if city_hit:
-            score -= 20.0
+            score -= 24.0
         if state_hit:
-            score -= 8.0
+            score -= 10.0
         if name_hit:
             score -= 12.0
 
@@ -184,7 +278,7 @@ def infer_community(
             best_raw_distance = raw_distance
 
     if latitude is not None and longitude is not None and best_raw_distance > max_distance_km:
-        if allow_dynamic_core and not enforce_existing:
+        if allow_dynamic_core and parsed_state and valid_city_for_core:
             return get_or_create_dynamic_core_community(
                 db,
                 latitude=float(latitude),
@@ -192,10 +286,178 @@ def infer_community(
                 address=address,
                 zipcode=zipcode,
             )
-        # Enforce assigning events only to existing communities.
+        # Enforce assigning events to existing communities when dynamic expansion is disabled.
         return best if enforce_existing else None
 
     return best
+
+
+def freeze_core_communities_from_events(
+    db: Session,
+    target_count: int = 10,
+    reassign_existing_events: bool = True,
+    commit: bool = True,
+) -> Dict[str, int]:
+    all_events = db.query(Event).all()
+    events = [e for e in all_events if e.event_type != EventType.EARTHQUAKE]
+    if len(events) < max(30, target_count * 3):
+        events = all_events
+    city_state_agg: Dict[tuple[str, str], Dict[str, float]] = defaultdict(
+        lambda: {"count": 0.0, "lat_sum": 0.0, "lng_sum": 0.0}
+    )
+
+    for event in events:
+        if event.latitude is None or event.longitude is None:
+            continue
+        lat = float(event.latitude)
+        lng = float(event.longitude)
+        if not is_us_coordinate(lat, lng):
+            continue
+
+        state = _extract_state_from_address(event.address) or ""
+        city_candidates = _extract_place_candidates_from_address(event.address)
+        city = city_candidates[0] if city_candidates else ""
+
+        if not city:
+            continue
+        if not state:
+            state = "US"
+
+        key = (state.upper(), city)
+        item = city_state_agg[key]
+        item["count"] += 1.0
+        item["lat_sum"] += lat
+        item["lng_sum"] += lng
+
+    ranked = sorted(city_state_agg.items(), key=lambda x: x[1]["count"], reverse=True)
+    selected: List[Dict] = []
+    selected_name_set = set()
+    street_like_tokens = {" st", " ave", " rd", " blvd", " drive", " dr", " lane", " ln", " ct", " court", " block"}
+
+    # Always keep a stable urban core baseline to avoid overfitting to temporary hazard-heavy feeds.
+    for base in CORE_COMMUNITIES:
+        if len(selected) >= target_count:
+            break
+        base_name = base["name"]
+        if base_name in selected_name_set:
+            continue
+        selected_name_set.add(base_name)
+        selected.append(
+            {
+                "name": base_name,
+                "state": base.get("state", "US"),
+                "city": base.get("city", "Core"),
+                "zipcode": base.get("zipcode"),
+                "latitude": float(base.get("latitude", 0.0)),
+                "longitude": float(base.get("longitude", 0.0)),
+                "population": int(base.get("population", 300000)),
+                "area": float(base.get("area", 40.0)),
+            }
+        )
+
+    for (state, city), stats in ranked:
+        if len(selected) >= target_count:
+            break
+        lowered_city = city.lower()
+        if any(tok in lowered_city for tok in street_like_tokens):
+            continue
+        center_lat = stats["lat_sum"] / stats["count"]
+        center_lng = stats["lng_sum"] / stats["count"]
+        name = f"{city}, {state}" if state != "US" else f"{city}"
+        if name in selected_name_set:
+            continue
+        selected_name_set.add(name)
+        selected.append(
+            {
+                # Keep deterministic core naming, avoid noisy suffixes like "#2".
+                "name": name,
+                "state": state,
+                "city": city,
+                "zipcode": None,
+                "latitude": round(center_lat, 6),
+                "longitude": round(center_lng, 6),
+                "population": 300000,
+                "area": 40.0,
+            }
+        )
+        if len(selected) >= target_count:
+            break
+
+    if len(selected) < target_count:
+        # Fallback: fill with highest-volume existing communities to avoid empty/noisy generated cores.
+        counts = (
+            db.query(Community, func.count(Event.id).label("event_count"))
+            .join(Event, Event.community_id == Community.id)
+            .group_by(Community.id)
+            .order_by(func.count(Event.id).desc())
+            .all()
+        )
+        for community, _event_count in counts:
+            if len(selected) >= target_count:
+                break
+            if community.name in selected_name_set:
+                continue
+            selected_name_set.add(community.name)
+            selected.append(
+                {
+                    "name": community.name,
+                    "state": community.state or "US",
+                    "city": community.city or "Core",
+                    "zipcode": community.zipcode,
+                    "latitude": float(community.latitude or 0.0),
+                    "longitude": float(community.longitude or 0.0),
+                    "population": int(community.population or 300000),
+                    "area": float(community.area or 40.0),
+                }
+            )
+
+    if not selected:
+        selected = CORE_COMMUNITIES
+
+    _save_core_communities_template(selected)
+    create_result = ensure_core_communities(db, commit=commit)
+    templates = _load_core_communities_template()
+    core_names = {item.get("name") for item in templates if item.get("name")}
+    core_communities = db.query(Community).filter(Community.name.in_(core_names)).all()
+
+    reassigned = 0
+    if reassign_existing_events and core_communities:
+        by_state_city = {}
+        for c in core_communities:
+            st = (c.state or "").upper().strip()
+            ct = (c.city or "").strip().lower()
+            if st and ct:
+                by_state_city[(st, ct)] = c
+
+        for event in db.query(Event).all():
+            matched = None
+            state = (_extract_state_from_address(event.address) or "").upper().strip()
+            city_candidates = _extract_place_candidates_from_address(event.address)
+            if state and city_candidates:
+                city_key = city_candidates[0].strip().lower()
+                matched = by_state_city.get((state, city_key))
+
+            if not matched:
+                if event.latitude is None or event.longitude is None:
+                    continue
+                lat = float(event.latitude)
+                lng = float(event.longitude)
+                matched = min(
+                    core_communities,
+                    key=lambda c: _distance_km(lat, lng, float(c.latitude or lat), float(c.longitude or lng)),
+                )
+            if event.community_id != matched.id:
+                event.community_id = matched.id
+                reassigned += 1
+        if commit:
+            db.commit()
+
+    return {
+        "frozen_core_count": len(selected),
+        "created_new_communities": int(create_result.get("created", 0)),
+        "reassigned_events": reassigned,
+        "total_communities": int(create_result.get("total", 0)),
+    }
 
 
 def build_community_report(events: List[Event]) -> Dict[str, str]:
@@ -354,49 +616,38 @@ def get_or_create_dynamic_core_community(
 
     zip5 = _normalize_zip(zipcode)
     city, state = _extract_city_state(address)
+    parsed_state = (_extract_state_from_address(address) or "").upper().strip()
+    city_candidates = _extract_place_candidates_from_address(address)
+    parsed_city = city_candidates[0] if city_candidates else None
+    city_candidate = parsed_city or city
+    state_candidate = parsed_state or state
 
-    if zip5:
-        existing_by_zip = db.query(Community).filter(Community.zipcode == zip5).first()
-        if existing_by_zip:
-            return existing_by_zip
+    templates = _load_core_communities_template()
+    template_names = {item.get("name") for item in templates if item.get("name")}
+    scoped_query = db.query(Community).filter(Community.name.in_(template_names)) if template_names else db.query(Community)
 
-    if city:
+    if city_candidate:
         existing_by_city = (
-            db.query(Community)
-            .filter(Community.city.ilike(city))
+            scoped_query
+            .filter(Community.city.ilike(city_candidate))
             .order_by(Community.id.asc())
             .first()
         )
         if existing_by_city:
             return existing_by_city
 
-    # Reuse nearby auto core to avoid fragmentation.
-    nearby_auto = []
-    for c in db.query(Community).filter(Community.name.ilike("Auto Zone Core%")).all():
-        if c.latitude is None or c.longitude is None:
-            continue
-        d = _distance_km(latitude, longitude, float(c.latitude), float(c.longitude))
-        if d <= 140.0:
-            nearby_auto.append((d, c))
-    if nearby_auto:
-        nearby_auto.sort(key=lambda x: x[0])
-        return nearby_auto[0][1]
+    if not state_candidate or state_candidate not in US_STATE_CODES:
+        return None
+    if not _is_valid_core_city_name(city_candidate):
+        return None
 
-    state_final = state or "US"
-    city_final = city or "Auto Zone"
-
-    # Reuse deterministic geo-bucket auto community (prevents creating many sparse zones).
-    if not city and not zip5:
-        lat_bucket = _geo_bucket(latitude, 2.0)
-        lng_bucket = _geo_bucket(longitude, 2.0)
-        bucket_name = f"Auto Zone Core [{lat_bucket:.1f},{lng_bucket:.1f}]"
-        bucket_existing = db.query(Community).filter(Community.name == bucket_name).first()
-        if bucket_existing:
-            return bucket_existing
-        name_base = bucket_name
-    else:
-        name_base = f"{city_final} Core {zip5}" if zip5 else f"{city_final} Core"
-
+    state_final = state_candidate
+    city_final = city_candidate
+    if zip5:
+        existing_by_zip = scoped_query.filter(Community.zipcode == zip5).first()
+        if existing_by_zip:
+            return existing_by_zip
+    name_base = f"{city_final}, {state_final}" if state_final != "US" else f"{city_final}"
     name = _unique_community_name(db, name_base)
 
     community = Community(
@@ -413,11 +664,30 @@ def get_or_create_dynamic_core_community(
     db.add(community)
     db.commit()
     db.refresh(community)
+    _append_core_template_if_missing(community)
     return community
 
 
+def cleanup_empty_non_core_communities(db: Session, commit: bool = True) -> Dict[str, int]:
+    templates = _load_core_communities_template()
+    core_names = {item.get("name") for item in templates if item.get("name")}
+    candidates = db.query(Community).all()
+    removed = 0
+    for c in candidates:
+        if c.name in core_names:
+            continue
+        has_event = db.query(Event.id).filter(Event.community_id == c.id).first()
+        if has_event:
+            continue
+        db.delete(c)
+        removed += 1
+    if commit and removed:
+        db.commit()
+    return {"removed": removed}
+
+
 def merge_auto_zone_communities(db: Session, distance_km: float = 120.0, commit: bool = True) -> Dict[str, int]:
-    autos = db.query(Community).filter(Community.name.ilike("Auto Zone Core%")).order_by(Community.id.asc()).all()
+    autos = db.query(Community).filter(Community.name.ilike("Auto Zone%")).order_by(Community.id.asc()).all()
     if len(autos) <= 1:
         return {"clusters": len(autos), "merged_communities": 0, "reassigned_events": 0}
 
@@ -528,6 +798,10 @@ def _is_valid_place_token(token: str) -> bool:
     if not token:
         return False
     lowered = token.lower()
+    if " block " in f" {lowered} " or lowered.startswith("block "):
+        return False
+    if re.match(r"^\d", token.strip()):
+        return False
     if lowered in PLACE_STOPWORDS:
         return False
     if len(token) < 3:
@@ -537,6 +811,24 @@ def _is_valid_place_token(token: str) -> bool:
     if token.upper() in US_STATE_CODES:
         return False
     return True
+
+
+def _is_valid_core_city_name(city: Optional[str]) -> bool:
+    token = (city or "").strip()
+    if not token:
+        return False
+    lowered = token.lower()
+    if "lat" in lowered and "lng" in lowered:
+        return False
+    if re.search(r"\bkm\b", lowered):
+        return False
+    if ";" in token or "|" in token:
+        return False
+    if re.search(r"\d", token):
+        return False
+    if not re.search(r"[A-Za-z]{2,}", token):
+        return False
+    return _is_valid_place_token(token)
 
 
 def _extract_place_candidates_from_address(address: Optional[str]) -> List[str]:
@@ -634,9 +926,9 @@ def rename_auto_zone_communities(db: Session, commit: bool = True) -> Dict[str, 
             preferred_state = top_state
 
         if preferred_state and preferred_state not in top_place.upper().split():
-            target_base = f"{top_place} {preferred_state} Core"
+            target_base = f"{top_place}, {preferred_state}"
         else:
-            target_base = f"{top_place} Core"
+            target_base = f"{top_place}"
 
         # Avoid collisions while preserving readable real-place naming.
         target_name = _unique_community_name(db, target_base, exclude_id=community.id)

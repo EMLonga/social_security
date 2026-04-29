@@ -10,8 +10,8 @@
       <div v-else-if="community" class="community-detail">
         <div class="community-header">
           <div>
-            <h1>{{ community.name }}</h1>
-            <p class="location">{{ community.state }}, {{ community.city }} {{ community.zipcode }}</p>
+            <h1>{{ localizeCommunityName(community.name, community.state, community.city) }}</h1>
+            <p class="location">{{ localizeCommunityName(community.name, community.state, community.city) }} {{ community.zipcode }}</p>
           </div>
           <div class="header-actions">
             <button v-if="isLoggedIn" class="btn btn-primary" @click="toggleFollow">
@@ -42,7 +42,7 @@
           </div>
           <div class="stat">
             <div class="stat-label">{{ t('recentEvents30d') }}</div>
-            <div class="stat-value">{{ recentEvents.length }}</div>
+            <div class="stat-value">{{ totalRecentEvents }}</div>
           </div>
           <div class="stat">
             <div class="stat-label">{{ t('topEventType') }}</div>
@@ -87,7 +87,7 @@
         </div>
 
         <div class="recent-events">
-          <h3>{{ t('recentEventsIn') }} {{ community.name }}</h3>
+          <h3>{{ t('recentEventsIn') }} {{ localizeCommunityName(community.name, community.state, community.city) }}</h3>
           <div v-if="recentEvents.length === 0" class="empty-state">
             <p>{{ t('noRecentEvents') }}</p>
           </div>
@@ -98,6 +98,17 @@
               </span>
               <span class="event-info">{{ event.title }} - {{ formatTime(event.eventTime) }}</span>
             </div>
+          </div>
+          <div v-if="totalRecentEventPages > 1" class="events-pagination">
+            <el-pagination
+              v-model:current-page="eventPage"
+              v-model:page-size="eventPageSize"
+              :total="totalRecentEvents"
+              :page-sizes="[10, 20, 50, 100]"
+              layout="total, sizes, prev, pager, next, jumper"
+              @current-change="loadCommunityEvents"
+              @size-change="onEventPageSizeChange"
+            />
           </div>
           <router-link :to="`/events?community=${community.id}`" class="btn btn-secondary">{{ t('viewAllEvents') }}</router-link>
         </div>
@@ -114,7 +125,7 @@ import L from 'leaflet'
 import * as echarts from 'echarts'
 import { useUserStore } from '../stores/app'
 import { communityService, eventService } from '../services/api'
-import { dateUtils, eventTypeColors, getEventTypeLabel, getSafetyLevelLabel, mapNoDataLabel } from '../utils/helpers'
+import { dateUtils, eventTypeColors, getEventTypeLabel, getSafetyLevelLabel, localizeCommunityName, mapNoDataLabel } from '../utils/helpers'
 import { useI18n } from '../utils/i18n'
 
 const route = useRoute()
@@ -124,6 +135,9 @@ const { t } = useI18n()
 
 const community = ref(null)
 const recentEvents = ref([])
+const totalRecentEvents = ref(0)
+const eventPage = ref(1)
+const eventPageSize = ref(20)
 const loading = ref(false)
 const isFollowing = ref(false)
 const mapError = ref('')
@@ -228,6 +242,9 @@ const topEventType = computed(() => {
   })
   return getEventTypeLabel(Object.keys(counter).sort((a, b) => counter[b] - counter[a])[0])
 })
+const totalRecentEventPages = computed(() =>
+  Math.max(1, Math.ceil((totalRecentEvents.value || 0) / (eventPageSize.value || 1)))
+)
 
 const communityReport = computed(() => {
   return (
@@ -413,17 +430,7 @@ const loadCommunity = async () => {
     community.value = normalizeCommunity(communityRes.data.community)
     isFollowing.value = !!community.value?.is_following
 
-    try {
-      const eventsRes = await eventService.getEvents({
-        community: id,
-        limit: 100,
-        sortBy: 'publishTime',
-      })
-      recentEvents.value = (eventsRes.data.events || []).slice(0, 30)
-    } catch (eventsError) {
-      console.error('Failed to load community events', eventsError)
-      recentEvents.value = []
-    }
+    await loadCommunityEvents()
   } catch (error) {
     ElMessage.error('Failed to load community details')
     console.error(error)
@@ -441,6 +448,30 @@ const loadCommunity = async () => {
       }
     }
   }
+}
+
+const loadCommunityEvents = async () => {
+  if (!community.value?.id && !route.params.id) return
+  try {
+    const eventsRes = await eventService.getEvents({
+      community: community.value?.id || route.params.id,
+      page: eventPage.value,
+      pageSize: eventPageSize.value,
+      timeRange: 30,
+      sortBy: 'publishTime',
+    })
+    recentEvents.value = eventsRes.data.events || []
+    totalRecentEvents.value = eventsRes.data.total || 0
+  } catch (eventsError) {
+    console.error('Failed to load community events', eventsError)
+    recentEvents.value = []
+    totalRecentEvents.value = 0
+  }
+}
+
+const onEventPageSizeChange = () => {
+  eventPage.value = 1
+  loadCommunityEvents()
 }
 
 const toggleFollow = async () => {

@@ -19,7 +19,12 @@ from models import (
     UserRole,
 )
 from security import get_current_admin
-from services.community_intelligence import ensure_core_communities, infer_community, upsert_community_report
+from services.community_intelligence import (
+    ensure_core_communities,
+    freeze_core_communities_from_events,
+    infer_community,
+    upsert_community_report,
+)
 from spider.crawler import scheduler
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -184,7 +189,7 @@ async def create_admin_event(
         address=payload.address,
         zipcode=payload.zipcode,
         max_distance_km=180.0,
-        allow_dynamic_core=False,
+        allow_dynamic_core=True,
         enforce_existing=True,
     )
     if not inferred:
@@ -510,6 +515,16 @@ async def stop_spider(
     current_admin: User = Depends(get_current_admin),
 ):
     return {"message": "Spider stopped"}
+
+
+@router.post("/spider/freeze-core-communities")
+async def freeze_core_communities(
+    target_count: int = Query(10, ge=4, le=30),
+    db: Session = Depends(get_db),
+    current_admin: User = Depends(get_current_admin),
+):
+    result = freeze_core_communities_from_events(db, target_count=target_count, commit=True)
+    return {"message": "Core communities frozen", "summary": result}
 
 
 @router.get("/config")
