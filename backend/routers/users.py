@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload
 from database import get_db
-from models import User
+from models import User, Comment
 from schemas import UserDetailResponse, UserUpdate, EventListResponse, CommunityListResponse, CommentListResponse
 from security import get_current_user, hash_password, verify_password
 
@@ -85,6 +86,24 @@ async def get_my_comments(
     current_user: User = Depends(get_current_user)
 ):
     """Get user's own comments"""
-    comments = current_user.comments
+    comments = (
+        db.query(Comment)
+        .options(joinedload(Comment.event))
+        .filter(Comment.user_id == current_user.id)
+        .order_by(Comment.created_at.desc())
+        .all()
+    )
     total = len(comments)
-    return {"total": total, "comments": comments}
+    payload = [
+        {
+            "id": item.id,
+            "content": item.content,
+            "user_id": item.user_id,
+            "event_id": item.event_id,
+            "event_title": item.event.title if item.event else None,
+            "created_at": item.created_at,
+            "user": None,
+        }
+        for item in comments
+    ]
+    return {"total": total, "comments": payload}

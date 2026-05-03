@@ -173,6 +173,7 @@ class CommentResponse(BaseModel):
     content: str
     user_id: int
     event_id: int
+    event_title: Optional[str] = None
     created_at: datetime
     user: Optional[UserResponse] = None
 

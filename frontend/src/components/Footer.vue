@@ -1,28 +1,9 @@
-<template>
+﻿<template>
   <footer class="footer" :class="{ 'dark-mode': isDark }">
     <div class="footer-container">
       <div class="footer-section">
-        <h4>{{ t('dataSourceTitle') }}</h4>
-        <p>{{ t('footerDataSourceText') }}</p>
-      </div>
-
-      <div class="footer-section">
-        <h4>{{ t('disclaimer') }}</h4>
-        <p>{{ t('footerDisclaimerText') }}</p>
-      </div>
-
-      <div class="footer-section">
-        <h4>{{ t('links') }}</h4>
-        <ul>
-          <li><a href="#" target="_blank">{{ t('privacyPolicy') }}</a></li>
-          <li><a href="#" target="_blank">{{ t('termsOfService') }}</a></li>
-          <li><a href="#" target="_blank">{{ t('contactUs') }}</a></li>
-        </ul>
-      </div>
-
-      <div class="footer-section">
         <h4>{{ t('about') }}</h4>
-        <p>&copy; 2026 {{ t('footerCopyright') }}</p>
+        <p>2026&#24180;&#21271;&#20140;&#20449;&#24687;&#31185;&#25216;&#22823;&#23398;&#29256;&#26435;&#25152;&#26377;</p>
       </div>
     </div>
   </footer>
@@ -57,9 +38,10 @@ const isDark = computed(() => appStore.isDarkMode)
 .footer-container {
   max-width: 1400px;
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 30px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
 }
 
 .footer-section h4 {
@@ -76,25 +58,4 @@ const isDark = computed(() => appStore.isDarkMode)
 .footer.dark-mode .footer-section p {
   color: #9fb0c8;
 }
-
-.footer-section ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.footer-section ul li {
-  margin-bottom: 8px;
-}
-
-.footer-section a {
-  color: #409eff;
-  text-decoration: none;
-  transition: color 0.3s;
-}
-
-.footer-section a:hover {
-  color: #66b1ff;
-}
-
 </style>

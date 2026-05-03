@@ -86,7 +86,7 @@
                 <span class="comment-date">{{ formatTime(comment.createdAt) }}</span>
                 <button class="delete-btn" @click="deleteMyComment(comment.id)">{{ t('delete') }}</button>
               </div>
-              <p class="comment-event">{{ t('onEvent') }}: <a @click="goToEvent(comment.eventId || comment.event_id)">{{ comment.event?.title || comment.eventTitle || comment.event_id || t('events') }}</a></p>
+              <p class="comment-event">{{ t('onEvent') }}: <a @click="goToEvent(comment.eventId || comment.event_id)">{{ comment.event?.title || comment.eventTitle || ((comment.eventId || comment.event_id) ? `${t('events')} #${comment.eventId || comment.event_id}` : t('events')) }}</a></p>
               <p class="comment-text">{{ comment.content }}</p>
             </div>
           </div>
@@ -134,6 +134,40 @@ const truncateText = (text, length = 80) => {
   return text.length > length ? `${text.substring(0, length)}...` : text
 }
 
+const enrichCommentEventTitles = async (comments) => {
+  const list = Array.isArray(comments) ? comments : []
+  const missingIds = [
+    ...new Set(
+      list
+        .filter((item) => !item?.eventTitle && !item?.event?.title)
+        .map((item) => Number(item?.eventId || item?.event_id))
+        .filter((id) => Number.isFinite(id) && id > 0)
+    ),
+  ]
+  if (!missingIds.length) return list
+
+  const responses = await Promise.allSettled(
+    missingIds.map((id) => eventService.getEventById(id))
+  )
+  const titleMap = new Map()
+  responses.forEach((res, idx) => {
+    if (res.status !== 'fulfilled') return
+    const title = res.value?.data?.event?.title
+    if (!title) return
+    titleMap.set(missingIds[idx], title)
+  })
+
+  return list.map((item) => {
+    const eventId = Number(item?.eventId || item?.event_id)
+    const fallbackTitle =
+      (Number.isFinite(eventId) && titleMap.get(eventId)) || item?.eventTitle || item?.event?.title || ''
+    return {
+      ...item,
+      eventTitle: fallbackTitle,
+    }
+  })
+}
+
 const loadData = async () => {
   try {
     const profileRes = await userService.getProfile()
@@ -147,7 +181,7 @@ const loadData = async () => {
     followedCommunities.value = followedRes.data.communities || []
 
     const commentsRes = await userService.getMyComments()
-    myComments.value = commentsRes.data.comments || []
+    myComments.value = await enrichCommentEventTitles(commentsRes.data.comments || [])
   } catch (error) {
     ElMessage.error('Failed to load data')
     console.error(error)

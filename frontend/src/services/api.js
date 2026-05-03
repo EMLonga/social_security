@@ -151,6 +151,7 @@ const normalizeComment = (comment) => {
     ...comment,
     createdAt: comment.created_at ?? comment.createdAt,
     eventId: comment.event_id ?? comment.eventId,
+    eventTitle: comment.event_title ?? comment.eventTitle ?? comment.event?.title,
     userId: comment.user_id ?? comment.userId,
   }
 }

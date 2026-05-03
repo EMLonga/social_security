@@ -222,9 +222,6 @@
           </div>
         </form>
 
-        <div class="auth-footer">
-          <a href="#">{{ t('privacyPolicy') }}</a> | <a href="#">{{ t('termsOfService') }}</a>
-        </div>
       </div>
     </div>
   </div>
@@ -746,24 +743,6 @@ onBeforeUnmount(() => {
 }
 
 .form-footer a:hover {
-  text-decoration: underline;
-}
-
-.auth-footer {
-  text-align: center;
-  margin-top: 24px;
-  padding-top: 16px;
-  border-top: 1px solid #f0f0f0;
-  font-size: 12px;
-  color: #999;
-}
-
-.auth-footer a {
-  color: #667eea;
-  text-decoration: none;
-}
-
-.auth-footer a:hover {
   text-decoration: underline;
 }
 

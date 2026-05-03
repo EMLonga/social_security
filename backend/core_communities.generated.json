@@ -1,5 +1,5 @@
 {
-  "frozen_at": "2026-04-29T08:09:09.470059+00:00",
+  "frozen_at": "2026-05-01T15:40:11.370073+00:00",
   "core_communities": [
     {
       "name": "Los Angeles, CA",
@@ -9568,6 +9568,206 @@
       "zipcode": null,
       "latitude": 37.317111,
       "longitude": -103.6385,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Buzzard Feather Wildfire MT Core",
+      "state": "MT",
+      "city": "Buzzard Feather Wildfire",
+      "zipcode": null,
+      "latitude": 48.52908,
+      "longitude": -105.55355,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Rx-millville Oak Woodlands Sna South Prescribed Fire WI Core",
+      "state": "WI",
+      "city": "Rx-millville Oak Woodlands Sna South Prescribed Fire",
+      "zipcode": null,
+      "latitude": 43.039137,
+      "longitude": -90.929398,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Sparks Wildfire NM Core",
+      "state": "NM",
+      "city": "Sparks Wildfire",
+      "zipcode": null,
+      "latitude": 34.846208,
+      "longitude": -104.055975,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Shady Grove Wildfire AL Core",
+      "state": "AL",
+      "city": "Shady Grove Wildfire",
+      "zipcode": null,
+      "latitude": 32.2958333,
+      "longitude": -85.3177778,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Cow Creek Wildfire FL Core",
+      "state": "FL",
+      "city": "Cow Creek Wildfire",
+      "zipcode": null,
+      "latitude": 29.2822222,
+      "longitude": -82.6311111,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Railroad Complex Wildfire FL Core",
+      "state": "FL",
+      "city": "Railroad Complex Wildfire",
+      "zipcode": null,
+      "latitude": 29.7855556,
+      "longitude": -81.6330556,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Pineland Rd Wildfire GA Core",
+      "state": "GA",
+      "city": "Pineland Rd Wildfire",
+      "zipcode": null,
+      "latitude": 30.7563889,
+      "longitude": -82.7680556,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Old Orangeburg Wildfire SC Core",
+      "state": "SC",
+      "city": "Old Orangeburg Wildfire",
+      "zipcode": null,
+      "latitude": 32.7258333,
+      "longitude": -81.2741667,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Appalachia Wildfire TN Core",
+      "state": "TN",
+      "city": "Appalachia Wildfire",
+      "zipcode": null,
+      "latitude": 35.1675,
+      "longitude": -84.3755,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Woodbury Wildfire SC Core",
+      "state": "SC",
+      "city": "Woodbury Wildfire",
+      "zipcode": null,
+      "latitude": 33.7498333,
+      "longitude": -79.2833333,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Newman Dr Wildfire FL Core",
+      "state": "FL",
+      "city": "Newman Dr Wildfire",
+      "zipcode": null,
+      "latitude": 26.1502778,
+      "longitude": -81.6330556,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Ciba Road Wildfire WA Core",
+      "state": "WA",
+      "city": "Ciba Road Wildfire",
+      "zipcode": null,
+      "latitude": 31.2669444,
+      "longitude": -88.0188889,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Old House Branch Wildfire WV Core",
+      "state": "WV",
+      "city": "Old House Branch Wildfire",
+      "zipcode": null,
+      "latitude": 37.639725,
+      "longitude": -81.941859,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Rafey Wildfire AL Core",
+      "state": "AL",
+      "city": "Rafey Wildfire",
+      "zipcode": null,
+      "latitude": 31.0927778,
+      "longitude": -88.2997222,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Slate Branch Wildfire WV Core",
+      "state": "WV",
+      "city": "Slate Branch Wildfire",
+      "zipcode": null,
+      "latitude": 37.704877,
+      "longitude": -82.163933,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Ste - Alum Wildfire KY Core",
+      "state": "KY",
+      "city": "Ste - Alum Wildfire",
+      "zipcode": null,
+      "latitude": 36.75897,
+      "longitude": -84.53148,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Rx-northern Scupp Ewo Prescribed Fire WI Core",
+      "state": "WI",
+      "city": "Rx-northern Scupp Ewo Prescribed Fire",
+      "zipcode": null,
+      "latitude": 42.9227232,
+      "longitude": -88.483243,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Rosindale Road Wildfire NC Core",
+      "state": "NC",
+      "city": "Rosindale Road Wildfire",
+      "zipcode": null,
+      "latitude": 34.435,
+      "longitude": -78.5313889,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Tige - West Celina Rx Prescribed Fire IN Core",
+      "state": "IN",
+      "city": "Tige - West Celina Rx Prescribed Fire",
+      "zipcode": null,
+      "latitude": 38.2051,
+      "longitude": -86.6266,
+      "population": 200000,
+      "area": 25.0
+    },
+    {
+      "name": "Rx Poorman Prescribed Fire ID Core",
+      "state": "ID",
+      "city": "Rx Poorman Prescribed Fire",
+      "zipcode": null,
+      "latitude": 44.07671,
+      "longitude": -115.89314,
       "population": 200000,
       "area": 25.0
     }
