@@ -40,33 +40,33 @@ class PublicSourceConfig:
     type_fields: List[str]
     description_fields: List[str]
     address_fields: List[str]
-    latitude_fields: List[str]
-    longitude_fields: List[str]
+    latitude_fields: List[str]       #经度
+    longitude_fields: List[str]      #纬度
     id_fields: List[str]
 
 
 PUBLIC_SOURCES: List[PublicSourceConfig] = [
     PublicSourceConfig(
-        name="NYC Open Data (NYPD Complaints)",
+        name="NYC Open Data (NYPD Complaints)",                         #纽约警方案件投诉数据
         url="https://data.cityofnewyork.us/resource/qgea-i56i.json",
         community_name="New York Manhattan",
         params={
-            "$limit": "80",
-            "$order": "cmplnt_fr_dt DESC",
-            "$where": "latitude IS NOT NULL AND longitude IS NOT NULL",
+            "$limit": "80",                                             #拉取数据条数
+            "$order": "cmplnt_fr_dt DESC",                              #投诉日期倒序排序
+            "$where": "latitude IS NOT NULL AND longitude IS NOT NULL", #只获取有经纬度的数据
         },
         datetime_field=None,
         date_field="cmplnt_fr_dt",
         time_field="cmplnt_fr_tm",
-        type_fields=["ofns_desc", "pd_desc", "law_cat_cd"],
+        type_fields=["ofns_desc", "pd_desc", "law_cat_cd"],             #事件类型字段优先从这几个字段中获取
         description_fields=["pd_desc", "ofns_desc", "law_cat_cd"],
-        address_fields=["prem_typ_desc", "boro_nm"],
+        address_fields=["prem_typ_desc", "boro_nm"],                    #地址字段优先从这几个字段中获取         
         latitude_fields=["latitude", "lat"],
         longitude_fields=["longitude", "lon", "lng"],
         id_fields=["cmplnt_num"],
     ),
     PublicSourceConfig(
-        name="SF Open Data (Police Incidents)",
+        name="SF Open Data (Police Incidents)",                         #旧金山警情数据
         url="https://data.sfgov.org/resource/wg3w-h783.json",
         community_name="San Francisco Bay",
         params={
@@ -85,7 +85,7 @@ PUBLIC_SOURCES: List[PublicSourceConfig] = [
         id_fields=["incident_number", "incident_id"],
     ),
     PublicSourceConfig(
-        name="Los Angeles Open Data (Crime Data from 2020 to Present)",
+        name="Los Angeles Open Data (Crime Data from 2020 to Present)", #洛杉矶犯罪数据
         url="https://data.lacity.org/resource/2nrs-mtv8.json",
         community_name="Los Angeles Downtown",
         params={
@@ -104,7 +104,7 @@ PUBLIC_SOURCES: List[PublicSourceConfig] = [
         id_fields=["dr_no"],
     ),
     PublicSourceConfig(
-        name="NYC Open Data (NYPD Arrests)",
+        name="NYC Open Data (NYPD Arrests)",                        #纽约警方案件逮捕数据
         url="https://data.cityofnewyork.us/resource/uip8-fykc.json",
         community_name="New York Manhattan",
         params={
@@ -123,7 +123,7 @@ PUBLIC_SOURCES: List[PublicSourceConfig] = [
         id_fields=["arrest_key"],
     ),
     PublicSourceConfig(
-        name="Chicago Data Portal (Crimes)",
+        name="Chicago Data Portal (Crimes)",                    #芝加哥犯罪数据
         url="https://data.cityofchicago.org/resource/ijzp-q8t2.json",
         community_name="Chicago Downtown",
         params={
@@ -142,7 +142,7 @@ PUBLIC_SOURCES: List[PublicSourceConfig] = [
         id_fields=["id", "case_number"],
     ),
     PublicSourceConfig(
-        name="Seattle Open Data (Real-Time 911 Calls)",
+        name="Seattle Open Data (Real-Time 911 Calls)",       #西雅图911警情数据
         url="https://data.seattle.gov/resource/kzjm-xkqj.json",
         community_name="Seattle",
         params={
@@ -161,7 +161,7 @@ PUBLIC_SOURCES: List[PublicSourceConfig] = [
         id_fields=["cad_event_number", "id"],
     ),
     PublicSourceConfig(
-        name="Austin Open Data (Crime Reports)",
+        name="Austin Open Data (Crime Reports)",            #奥斯汀犯罪报告数据
         url="https://data.austintexas.gov/resource/fdj4-gpfu.json",
         community_name="Austin",
         params={
@@ -181,15 +181,24 @@ PUBLIC_SOURCES: List[PublicSourceConfig] = [
     ),
 ]
 
-
+# 公共数据采集模块的核心
+'''
+    创建 HTTP 请求会话；
+    请求各个公开数据源；
+    对原始数据进行字段提取和格式标准化；
+    判断事件类型和危险等级；
+    识别事件所属社区；
+    保存事件到数据库；
+    处理地震、天气、火灾、自然灾害等实时数据源
+'''
 class PublicDataIngestor:
     def __init__(self):
-        self.session: Optional[aiohttp.ClientSession] = None
-        self.db: Optional[Session] = None
-        self._request_sem = asyncio.Semaphore(2)
-        self._domain_last_hit: Dict[str, float] = {}
-        self._domain_min_interval_sec = 0.9
-        self._user_agents = [
+        self.session: Optional[aiohttp.ClientSession] = None   #异步HTTP请求会话
+        self.db: Optional[Session] = None                      #数据库连接会话
+        self._request_sem = asyncio.Semaphore(2)               #限制同时进行的HTTP请求数量，避免过度并发导致目标服务器拒绝服务
+        self._domain_last_hit: Dict[str, float] = {}           #记录每个域名最后请求的时间，用于实现域名级别的请求间隔控制
+        self._domain_min_interval_sec = 0.9                    #同一域名的最小请求间隔，单位为秒，设置为0.9秒可以在每秒钟内最多发送1-2个请求，降低被封禁的风险
+        self._user_agents = [                                  #定义多个User-Agent,在请求头中随机选择一个，模拟不同的浏览器或爬虫身份，增加请求的多样性，减少被目标服务器识别为爬虫的风险
             "CommunitySafetyAlert/1.0 (+public-data-ingestor)",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) CommunitySafetyAlertBot/1.0",
             "Mozilla/5.0 (X11; Linux x86_64) CommunitySafetyAlertBot/1.0",
@@ -203,11 +212,11 @@ class PublicDataIngestor:
         if SOCRATA_APP_TOKEN:
             headers["X-App-Token"] = SOCRATA_APP_TOKEN
         self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=20),
+            timeout=aiohttp.ClientTimeout(total=20),   # 设置请求超时事件为20秒
             headers=headers,
         )
-        self.db = SessionLocal()
-        ensure_core_communities(self.db, commit=True)
+        self.db = SessionLocal()                       # 创建数据库会话
+        ensure_core_communities(self.db, commit=True)  # 确保数据库里存在核心社区数据
 
     async def stop(self):
         if self.session:
@@ -216,7 +225,7 @@ class PublicDataIngestor:
             self.db.close()
 
     @staticmethod
-    def _pick_value(row: Dict[str, Any], keys: List[str]) -> Optional[str]:
+    def _pick_value(row: Dict[str, Any], keys: List[str]) -> Optional[str]:   #从数据行中按照优先级顺序提取第一个非空文本值
         for key in keys:
             value = row.get(key)
             if value is None:
@@ -227,7 +236,7 @@ class PublicDataIngestor:
         return None
 
     @staticmethod
-    def _collect_values(row: Dict[str, Any], keys: List[str]) -> List[str]:
+    def _collect_values(row: Dict[str, Any], keys: List[str]) -> List[str]:  #从数据行中提取所有非空文本值
         values: List[str] = []
         seen = set()
         for key in keys:
@@ -244,7 +253,7 @@ class PublicDataIngestor:
             values.append(text)
         return values
 
-    def _build_incident_narrative(self, row: Dict[str, Any], source: PublicSourceConfig) -> str:
+    def _build_incident_narrative(self, row: Dict[str, Any], source: PublicSourceConfig) -> str:      #生成事件叙述文本
         narrative_keys = [
             "incident_description", "description", "narrative", "summary", "details",
             "event_clearance_description", "initial_type_description", "offense_location_description",
@@ -259,7 +268,7 @@ class PublicDataIngestor:
         return " | ".join(fragments[:4])[:900]
 
     @staticmethod
-    def _parse_datetime(raw: Optional[str]) -> datetime:
+    def _parse_datetime(raw: Optional[str]) -> datetime:      #时间和数值处理函数
         if not raw:
             return datetime.now(timezone.utc)
         text = raw.strip().replace("Z", "+00:00")
